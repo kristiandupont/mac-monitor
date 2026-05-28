@@ -1,0 +1,17 @@
+{
+  "name": "mac-monitor-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@b9g/crank": "^0.6.0",
+    "chart.js": "^4.4.3"
+  },
+  "devDependencies": {
+    "vite": "^5.3.1"
+  }
+}
