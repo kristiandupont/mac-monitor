@@ -47,10 +47,39 @@ func migrate(db *sql.DB) error {
 			load_1       REAL    NOT NULL,
 			load_5       REAL    NOT NULL,
 			load_15      REAL    NOT NULL,
-			net_stats    TEXT    NOT NULL
+			net_stats    TEXT    NOT NULL,
+			gpu_stats    TEXT    NOT NULL DEFAULT '[]'
 		);
 		CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
 	`)
+	if err != nil {
+		return err
+	}
+	return addColumnIfMissing(db, "snapshots", "gpu_stats", "TEXT NOT NULL DEFAULT '[]'")
+}
+
+func addColumnIfMissing(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already exists
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
 	return err
 }
 
@@ -63,16 +92,20 @@ func (d *DB) Insert(s *collector.Snapshot) error {
 	if err != nil {
 		return err
 	}
+	gpus, err := json.Marshal(s.GPUStats)
+	if err != nil {
+		return err
+	}
 	_, err = d.db.Exec(`
 		INSERT INTO snapshots
 			(ts, cpu_percent, cpu_per_core, mem_total, mem_used, mem_percent,
-			 swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats, gpu_stats)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.Timestamp, s.CPUPercent, string(cores),
 		s.MemTotal, s.MemUsed, s.MemPercent,
 		s.SwapTotal, s.SwapUsed, s.SwapPercent,
 		s.Load1, s.Load5, s.Load15,
-		string(nets),
+		string(nets), string(gpus),
 	)
 	return err
 }
@@ -80,7 +113,7 @@ func (d *DB) Insert(s *collector.Snapshot) error {
 func (d *DB) Query(from, to int64) ([]*collector.Snapshot, error) {
 	rows, err := d.db.Query(`
 		SELECT ts, cpu_percent, cpu_per_core, mem_total, mem_used, mem_percent,
-		       swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats
+		       swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats, gpu_stats
 		FROM snapshots
 		WHERE ts >= ? AND ts <= ?
 		ORDER BY ts`, from, to)
@@ -92,18 +125,19 @@ func (d *DB) Query(from, to int64) ([]*collector.Snapshot, error) {
 	var snaps []*collector.Snapshot
 	for rows.Next() {
 		var s collector.Snapshot
-		var coresJSON, netsJSON string
+		var coresJSON, netsJSON, gpusJSON string
 		err := rows.Scan(
 			&s.Timestamp, &s.CPUPercent, &coresJSON,
 			&s.MemTotal, &s.MemUsed, &s.MemPercent,
 			&s.SwapTotal, &s.SwapUsed, &s.SwapPercent,
-			&s.Load1, &s.Load5, &s.Load15, &netsJSON,
+			&s.Load1, &s.Load5, &s.Load15, &netsJSON, &gpusJSON,
 		)
 		if err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(coresJSON), &s.CPUPerCore)
 		json.Unmarshal([]byte(netsJSON), &s.NetStats)
+		json.Unmarshal([]byte(gpusJSON), &s.GPUStats)
 		snaps = append(snaps, &s)
 	}
 	return snaps, rows.Err()
@@ -112,15 +146,15 @@ func (d *DB) Query(from, to int64) ([]*collector.Snapshot, error) {
 func (d *DB) Latest() (*collector.Snapshot, error) {
 	row := d.db.QueryRow(`
 		SELECT ts, cpu_percent, cpu_per_core, mem_total, mem_used, mem_percent,
-		       swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats
+		       swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats, gpu_stats
 		FROM snapshots ORDER BY ts DESC LIMIT 1`)
 	var s collector.Snapshot
-	var coresJSON, netsJSON string
+	var coresJSON, netsJSON, gpusJSON string
 	err := row.Scan(
 		&s.Timestamp, &s.CPUPercent, &coresJSON,
 		&s.MemTotal, &s.MemUsed, &s.MemPercent,
 		&s.SwapTotal, &s.SwapUsed, &s.SwapPercent,
-		&s.Load1, &s.Load5, &s.Load15, &netsJSON,
+		&s.Load1, &s.Load5, &s.Load15, &netsJSON, &gpusJSON,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -130,6 +164,7 @@ func (d *DB) Latest() (*collector.Snapshot, error) {
 	}
 	json.Unmarshal([]byte(coresJSON), &s.CPUPerCore)
 	json.Unmarshal([]byte(netsJSON), &s.NetStats)
+	json.Unmarshal([]byte(gpusJSON), &s.GPUStats)
 	return &s, nil
 }
 

@@ -2,6 +2,7 @@ import {renderer} from "@b9g/crank/dom";
 import {MetricGauge} from "./components/MetricGauge.jsx";
 import {LoadAvg} from "./components/LoadAvg.jsx";
 import {CpuChart} from "./components/CpuChart.jsx";
+import {GpuCard} from "./components/GpuCard.jsx";
 
 const MAX_HISTORY = 720; // 1 hour at 5s intervals
 
@@ -79,6 +80,8 @@ function* App() {
                   <MetricGauge label="RAM" value={snap.mem_used} max={snap.mem_total} color="#3fb950" />
                   <MetricGauge label="Swap" value={snap.swap_used} max={snap.swap_total} color="#d29922" />
                 </div>
+
+                <GpuCard gpuStats={snap.gpu_stats} />
               </section>
 
               <section style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
