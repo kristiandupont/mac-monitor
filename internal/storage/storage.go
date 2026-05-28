@@ -34,28 +34,39 @@ func (d *DB) Close() error {
 func migrate(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS snapshots (
-			id           INTEGER PRIMARY KEY AUTOINCREMENT,
-			ts           INTEGER NOT NULL,
-			cpu_percent  REAL    NOT NULL,
-			cpu_per_core TEXT    NOT NULL,
-			mem_total    INTEGER NOT NULL,
-			mem_used     INTEGER NOT NULL,
-			mem_percent  REAL    NOT NULL,
-			swap_total   INTEGER NOT NULL,
-			swap_used    INTEGER NOT NULL,
-			swap_percent REAL    NOT NULL,
-			load_1       REAL    NOT NULL,
-			load_5       REAL    NOT NULL,
-			load_15      REAL    NOT NULL,
-			net_stats    TEXT    NOT NULL,
-			gpu_stats    TEXT    NOT NULL DEFAULT '[]'
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			ts             INTEGER NOT NULL,
+			cpu_percent    REAL    NOT NULL,
+			cpu_per_core   TEXT    NOT NULL,
+			mem_total      INTEGER NOT NULL,
+			mem_used       INTEGER NOT NULL,
+			mem_percent    REAL    NOT NULL,
+			swap_total     INTEGER NOT NULL,
+			swap_used      INTEGER NOT NULL,
+			swap_percent   REAL    NOT NULL,
+			load_1         REAL    NOT NULL,
+			load_5         REAL    NOT NULL,
+			load_15        REAL    NOT NULL,
+			net_stats      TEXT    NOT NULL,
+			gpu_stats      TEXT    NOT NULL DEFAULT '[]',
+			disk_stats     TEXT    NOT NULL DEFAULT '[]',
+			disk_io_stats  TEXT    NOT NULL DEFAULT '[]'
 		);
 		CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
 	`)
 	if err != nil {
 		return err
 	}
-	return addColumnIfMissing(db, "snapshots", "gpu_stats", "TEXT NOT NULL DEFAULT '[]'")
+	for col, def := range map[string]string{
+		"gpu_stats":     "TEXT NOT NULL DEFAULT '[]'",
+		"disk_stats":    "TEXT NOT NULL DEFAULT '[]'",
+		"disk_io_stats": "TEXT NOT NULL DEFAULT '[]'",
+	} {
+		if err := addColumnIfMissing(db, "snapshots", col, def); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func addColumnIfMissing(db *sql.DB, table, column, definition string) error {
@@ -96,16 +107,25 @@ func (d *DB) Insert(s *collector.Snapshot) error {
 	if err != nil {
 		return err
 	}
+	disks, err := json.Marshal(s.DiskStats)
+	if err != nil {
+		return err
+	}
+	diskIOs, err := json.Marshal(s.DiskIOStats)
+	if err != nil {
+		return err
+	}
 	_, err = d.db.Exec(`
 		INSERT INTO snapshots
 			(ts, cpu_percent, cpu_per_core, mem_total, mem_used, mem_percent,
-			 swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats, gpu_stats)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 swap_total, swap_used, swap_percent, load_1, load_5, load_15,
+			 net_stats, gpu_stats, disk_stats, disk_io_stats)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.Timestamp, s.CPUPercent, string(cores),
 		s.MemTotal, s.MemUsed, s.MemPercent,
 		s.SwapTotal, s.SwapUsed, s.SwapPercent,
 		s.Load1, s.Load5, s.Load15,
-		string(nets), string(gpus),
+		string(nets), string(gpus), string(disks), string(diskIOs),
 	)
 	return err
 }
@@ -113,7 +133,8 @@ func (d *DB) Insert(s *collector.Snapshot) error {
 func (d *DB) Query(from, to int64) ([]*collector.Snapshot, error) {
 	rows, err := d.db.Query(`
 		SELECT ts, cpu_percent, cpu_per_core, mem_total, mem_used, mem_percent,
-		       swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats, gpu_stats
+		       swap_total, swap_used, swap_percent, load_1, load_5, load_15,
+		       net_stats, gpu_stats, disk_stats, disk_io_stats
 		FROM snapshots
 		WHERE ts >= ? AND ts <= ?
 		ORDER BY ts`, from, to)
@@ -125,12 +146,13 @@ func (d *DB) Query(from, to int64) ([]*collector.Snapshot, error) {
 	var snaps []*collector.Snapshot
 	for rows.Next() {
 		var s collector.Snapshot
-		var coresJSON, netsJSON, gpusJSON string
+		var coresJSON, netsJSON, gpusJSON, disksJSON, diskIOsJSON string
 		err := rows.Scan(
 			&s.Timestamp, &s.CPUPercent, &coresJSON,
 			&s.MemTotal, &s.MemUsed, &s.MemPercent,
 			&s.SwapTotal, &s.SwapUsed, &s.SwapPercent,
-			&s.Load1, &s.Load5, &s.Load15, &netsJSON, &gpusJSON,
+			&s.Load1, &s.Load5, &s.Load15,
+			&netsJSON, &gpusJSON, &disksJSON, &diskIOsJSON,
 		)
 		if err != nil {
 			return nil, err
@@ -138,6 +160,8 @@ func (d *DB) Query(from, to int64) ([]*collector.Snapshot, error) {
 		json.Unmarshal([]byte(coresJSON), &s.CPUPerCore)
 		json.Unmarshal([]byte(netsJSON), &s.NetStats)
 		json.Unmarshal([]byte(gpusJSON), &s.GPUStats)
+		json.Unmarshal([]byte(disksJSON), &s.DiskStats)
+		json.Unmarshal([]byte(diskIOsJSON), &s.DiskIOStats)
 		snaps = append(snaps, &s)
 	}
 	return snaps, rows.Err()
@@ -146,15 +170,17 @@ func (d *DB) Query(from, to int64) ([]*collector.Snapshot, error) {
 func (d *DB) Latest() (*collector.Snapshot, error) {
 	row := d.db.QueryRow(`
 		SELECT ts, cpu_percent, cpu_per_core, mem_total, mem_used, mem_percent,
-		       swap_total, swap_used, swap_percent, load_1, load_5, load_15, net_stats, gpu_stats
+		       swap_total, swap_used, swap_percent, load_1, load_5, load_15,
+		       net_stats, gpu_stats, disk_stats, disk_io_stats
 		FROM snapshots ORDER BY ts DESC LIMIT 1`)
 	var s collector.Snapshot
-	var coresJSON, netsJSON, gpusJSON string
+	var coresJSON, netsJSON, gpusJSON, disksJSON, diskIOsJSON string
 	err := row.Scan(
 		&s.Timestamp, &s.CPUPercent, &coresJSON,
 		&s.MemTotal, &s.MemUsed, &s.MemPercent,
 		&s.SwapTotal, &s.SwapUsed, &s.SwapPercent,
-		&s.Load1, &s.Load5, &s.Load15, &netsJSON, &gpusJSON,
+		&s.Load1, &s.Load5, &s.Load15,
+		&netsJSON, &gpusJSON, &disksJSON, &diskIOsJSON,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -165,6 +191,8 @@ func (d *DB) Latest() (*collector.Snapshot, error) {
 	json.Unmarshal([]byte(coresJSON), &s.CPUPerCore)
 	json.Unmarshal([]byte(netsJSON), &s.NetStats)
 	json.Unmarshal([]byte(gpusJSON), &s.GPUStats)
+	json.Unmarshal([]byte(disksJSON), &s.DiskStats)
+	json.Unmarshal([]byte(diskIOsJSON), &s.DiskIOStats)
 	return &s, nil
 }
 

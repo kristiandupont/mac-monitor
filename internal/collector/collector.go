@@ -18,20 +18,22 @@ type NetStat struct {
 }
 
 type Snapshot struct {
-	Timestamp   int64     `json:"ts"`
-	CPUPercent  float64   `json:"cpu_percent"`
-	CPUPerCore  []float64 `json:"cpu_per_core"`
-	MemTotal    uint64    `json:"mem_total"`
-	MemUsed     uint64    `json:"mem_used"`
-	MemPercent  float64   `json:"mem_percent"`
-	SwapTotal   uint64    `json:"swap_total"`
-	SwapUsed    uint64    `json:"swap_used"`
-	SwapPercent float64   `json:"swap_percent"`
-	Load1       float64   `json:"load_1"`
-	Load5       float64   `json:"load_5"`
-	Load15      float64   `json:"load_15"`
-	NetStats    []NetStat `json:"net_stats"`
-	GPUStats    []GPUStat `json:"gpu_stats"`
+	Timestamp    int64        `json:"ts"`
+	CPUPercent   float64      `json:"cpu_percent"`
+	CPUPerCore   []float64    `json:"cpu_per_core"`
+	MemTotal     uint64       `json:"mem_total"`
+	MemUsed      uint64       `json:"mem_used"`
+	MemPercent   float64      `json:"mem_percent"`
+	SwapTotal    uint64       `json:"swap_total"`
+	SwapUsed     uint64       `json:"swap_used"`
+	SwapPercent  float64      `json:"swap_percent"`
+	Load1        float64      `json:"load_1"`
+	Load5        float64      `json:"load_5"`
+	Load15       float64      `json:"load_15"`
+	NetStats     []NetStat    `json:"net_stats"`
+	GPUStats     []GPUStat    `json:"gpu_stats"`
+	DiskStats    []DiskStat   `json:"disk_stats"`
+	DiskIOStats  []DiskIOStat `json:"disk_io_stats"`
 }
 
 func Collect() (*Snapshot, error) {
@@ -91,10 +93,17 @@ func Collect() (*Snapshot, error) {
 
 	gpuStats, err := collectGPU()
 	if err != nil {
-		// GPU collection is best-effort — don't fail the whole snapshot
 		gpuStats = nil
 	}
 	snap.GPUStats = gpuStats
+
+	diskStats, diskIOStats, err := collectDisk()
+	if err != nil {
+		diskStats = nil
+		diskIOStats = nil
+	}
+	snap.DiskStats = diskStats
+	snap.DiskIOStats = diskIOStats
 
 	return snap, nil
 }
