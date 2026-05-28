@@ -1,2 +1,6 @@
+mac-monitor
+mac-monitor.db
 node_modules/
+web/node_modules/
 dist/
+web/dist/

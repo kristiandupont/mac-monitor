@@ -142,7 +142,7 @@ function* App() {
       }
 
       let gpuDatasets = null;
-      if (history.length > 0 && history[0].gpu_stats?.length) {
+      if (snap?.gpu_stats?.length) {
         const labels = history.map(s => fmtTime(s.ts));
         gpuDatasets = [
           {labels, data: history.map(s => s.gpu_stats?.[0]?.device_utilization ?? 0),   color: "#bc8cff", label: "Device",   fill: true},
