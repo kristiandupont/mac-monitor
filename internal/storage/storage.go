@@ -58,8 +58,8 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	for col, def := range map[string]string{
-		"gpu_stats":     "TEXT NOT NULL DEFAULT '[]'",
-		"disk_stats":    "TEXT NOT NULL DEFAULT '[]'",
+		"gpu_stats":    "TEXT NOT NULL DEFAULT '[]'",
+		"disk_stats":   "TEXT NOT NULL DEFAULT '[]'",
 		"disk_io_stats": "TEXT NOT NULL DEFAULT '[]'",
 	} {
 		if err := addColumnIfMissing(db, "snapshots", col, def); err != nil {
@@ -84,7 +84,7 @@ func addColumnIfMissing(db *sql.DB, table, column, definition string) error {
 			return err
 		}
 		if name == column {
-			return nil // already exists
+			return nil
 		}
 	}
 	if err := rows.Err(); err != nil {
