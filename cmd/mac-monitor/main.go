@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime"
@@ -51,6 +53,11 @@ func main() {
 			log.Printf("server stopped: %v", err)
 			cancel()
 		}
+	}()
+
+	go func() {
+		log.Println("pprof listening on http://localhost:6060/debug/pprof/")
+		http.ListenAndServe("localhost:6060", nil)
 	}()
 
 	go func() {

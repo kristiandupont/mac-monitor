@@ -2,7 +2,7 @@ package tray
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Cocoa
+#cgo LDFLAGS: -framework Cocoa -framework QuartzCore
 #include "statusbar.h"
 #include <stdlib.h>
 */
@@ -35,7 +35,7 @@ const (
 	numFrames = 600
 	frameStep = 360.0 / numFrames // 0.6° per frame
 	frameSize = 44                // px, @2x retina
-	animFPS   = 30
+	animFPS   = 10
 )
 
 // palette[theme 0=light 1=dark][cpu step 0-3]

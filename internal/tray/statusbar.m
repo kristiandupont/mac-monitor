@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
 #include "statusbar.h"
 
 // Declared in exports.go via //export.
@@ -65,7 +66,14 @@ void setIconIndex(int idx) {
     if (idx < 0 || idx >= gImageCount || !gImages[idx]) return;
     NSImage* img = gImages[idx];
     dispatch_async(dispatch_get_main_queue(), ^{
+        // Disable implicit CA cross-fade animation. Without this, each setImage:
+        // call starts a ~100ms transition that keeps the layer dirty at 60Hz
+        // for its entire duration — causing continuous full-refresh-rate redraws
+        // even when the icon only changes at ~10fps.
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
         gItem.button.image = img;
+        [CATransaction commit];
     });
 }
 
