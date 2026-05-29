@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"fyne.io/systray"
+	"github.com/getlantern/systray"
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
 	xdraw "golang.org/x/image/draw"
@@ -214,9 +214,10 @@ func (t *Tray) onReady() {
 func (t *Tray) animate() {
 	ticker := time.NewTicker(time.Second / animFPS)
 	defer ticker.Stop()
-	var angle float64
+	var angle, smoothedVel float64
 	last := time.Now()
 	lastTheme, lastStep, lastFrame := -1, -1, -1
+	const velTau = 3.0 // velocity smoothing time constant in seconds
 
 	for range ticker.C {
 		now := time.Now()
@@ -224,7 +225,13 @@ func (t *Tray) animate() {
 		last = now
 
 		cpu := float64(t.cpu.Load())
-		angle = math.Mod(angle+angularVelocity(cpu)*dt, 360)
+
+		// Exponential moving average toward the target velocity so speed
+		// changes blend in over ~velTau seconds rather than snapping.
+		alpha := 1 - math.Exp(-dt/velTau)
+		smoothedVel += alpha * (angularVelocity(cpu) - smoothedVel)
+
+		angle = math.Mod(angle+smoothedVel*dt, 360)
 
 		theme := 0
 		if isDarkMode() {
