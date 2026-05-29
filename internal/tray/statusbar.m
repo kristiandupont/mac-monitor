@@ -2,13 +2,15 @@
 #import <QuartzCore/QuartzCore.h>
 #include "statusbar.h"
 
-// Declared in exports.go via //export.
 extern void onMenuItemClicked(int itemID);
 
-static NSStatusItem* gItem   = nil;
-static NSMenu*       gMenu   = nil;
-static NSImage**     gImages = nil;
-static int           gImageCount = 0;
+static NSStatusItem* gItem            = nil;
+static NSMenu*       gMenu            = nil;
+static NSView*       gIconView        = nil;
+static CALayer*      gRotateLayer     = nil;
+static NSImage**     gColorImages     = nil;
+static int           gColorCount      = 0;
+static int           gCurrentColorIdx = -1;
 
 @interface MenuTarget : NSObject
 @end
@@ -26,20 +28,41 @@ void initCocoaApp(void) {
 
 void setupStatusItem(const char* tooltip) {
     gTarget = [[MenuTarget alloc] init];
-
     gItem = [[NSStatusBar systemStatusBar]
         statusItemWithLength:NSSquareStatusItemLength];
     gItem.button.toolTip = [NSString stringWithUTF8String:tooltip];
-    gItem.button.imageScaling = NSImageScaleProportionallyDown;
+    gItem.button.wantsLayer = YES;
+
+    // Layer-backed subview for the fan icon. We rotate a dedicated CALayer sublayer
+    // (gRotateLayer) rather than the NSView-backed layer itself. NSView-backed layers
+    // have anchorPoint={0,0} (AppKit manages position from the origin), so setting
+    // transform on them rotates around the corner. The sublayer has full control over
+    // its anchorPoint={0.5,0.5} so rotation is always around the icon's center.
+    gIconView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 22, 22)];
+    gIconView.wantsLayer = YES;
+    gIconView.translatesAutoresizingMaskIntoConstraints = NO;
+    [gItem.button addSubview:gIconView];
+    [NSLayoutConstraint activateConstraints:@[
+        [gIconView.centerXAnchor constraintEqualToAnchor:gItem.button.centerXAnchor],
+        [gIconView.centerYAnchor constraintEqualToAnchor:gItem.button.centerYAnchor],
+        [gIconView.widthAnchor constraintEqualToConstant:22],
+        [gIconView.heightAnchor constraintEqualToConstant:22],
+    ]];
+
+    gRotateLayer = [CALayer layer];
+    gRotateLayer.bounds = CGRectMake(0, 0, 22, 22);
+    gRotateLayer.anchorPoint = CGPointMake(0.5, 0.5);
+    gRotateLayer.position = CGPointMake(11, 11);
+    gRotateLayer.contentsGravity = kCAGravityResizeAspect;
+    gRotateLayer.contentsScale = [NSScreen mainScreen].backingScaleFactor;
+    [gIconView.layer addSublayer:gRotateLayer];
 
     gMenu = [[NSMenu alloc] initWithTitle:@""];
     [gMenu setAutoenablesItems:NO];
     gItem.menu = gMenu;
 }
 
-void runCocoaApp(void) {
-    [NSApp run];
-}
+void runCocoaApp(void) { [NSApp run]; }
 
 void quitCocoaApp(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -48,31 +71,32 @@ void quitCocoaApp(void) {
     });
 }
 
-void preloadImagesInit(int count) {
-    gImages = (NSImage* __strong*)calloc(count, sizeof(NSImage*));
-    gImageCount = count;
+void preloadColorImagesInit(int count) {
+    gColorImages = (NSImage* __strong*)calloc(count, sizeof(NSImage*));
+    gColorCount = count;
 }
 
-void loadImageAtIndex(int idx, const unsigned char* data, int len) {
-    if (idx < 0 || idx >= gImageCount) return;
+void loadColorImage(int idx, const unsigned char* data, int len) {
+    if (idx < 0 || idx >= gColorCount) return;
     NSData*  nsdata = [NSData dataWithBytes:data length:len];
     NSImage* img    = [[NSImage alloc] initWithData:nsdata];
-    // Declare logical size as 22pt so macOS treats 44px as @2x (retina).
     [img setSize:NSMakeSize(22, 22)];
-    gImages[idx] = img;
+    gColorImages[idx] = img;
 }
 
-void setIconIndex(int idx) {
-    if (idx < 0 || idx >= gImageCount || !gImages[idx]) return;
-    NSImage* img = gImages[idx];
+void setIconFrame(int colorIdx, float angleDeg) {
+    if (colorIdx < 0 || colorIdx >= gColorCount || !gColorImages[colorIdx]) return;
+    int   capturedIdx   = colorIdx;
+    float capturedAngle = angleDeg;
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Disable implicit CA cross-fade animation. Without this, each setImage:
-        // call starts a ~100ms transition that keeps the layer dirty at 60Hz
-        // for its entire duration — causing continuous full-refresh-rate redraws
-        // even when the icon only changes at ~10fps.
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        gItem.button.image = img;
+        if (capturedIdx != gCurrentColorIdx) {
+            gRotateLayer.contents = gColorImages[capturedIdx];
+            gCurrentColorIdx = capturedIdx;
+        }
+        float rad = capturedAngle * (float)M_PI / 180.0f;
+        gRotateLayer.transform = CATransform3DMakeRotation(rad, 0, 0, 1);
         [CATransaction commit];
     });
 }

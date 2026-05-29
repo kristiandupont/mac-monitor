@@ -17,25 +17,20 @@ import (
 	"math"
 	"os/exec"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
-	xdraw "golang.org/x/image/draw"
-	"golang.org/x/image/math/f64"
 )
 
 //go:embed fan.svg
 var fanSVG string
 
 const (
-	numFrames = 600
-	frameStep = 360.0 / numFrames // 0.6° per frame
-	frameSize = 44                // px, @2x retina
-	animFPS   = 10
+	frameSize = 44 // px, @2x retina
+	animFPS   = 30
 )
 
 // palette[theme 0=light 1=dark][cpu step 0-3]
@@ -44,9 +39,8 @@ var palette = [2][4]string{
 	{"#EEEEEE", "#FF9999", "#FF4444", "#FF2222"},
 }
 
-// pngFrames holds encoded PNG bytes used only during startup loading.
-// Cleared after NSImages are pre-loaded to free the memory.
-var pngFrames [2][4][numFrames][]byte
+// pngBases holds 8 encoded PNGs (2 themes × 4 color steps). Cleared after loading.
+var pngBases [2][4][]byte
 
 var (
 	darkModeCached bool
@@ -99,104 +93,51 @@ func renderBase(hexColor string) (*image.RGBA, error) {
 	return img, nil
 }
 
-func rotateImage(src *image.RGBA, degrees float64) *image.RGBA {
-	b := src.Bounds()
-	cx, cy := float64(b.Max.X)/2, float64(b.Max.Y)/2
-	rad := degrees * math.Pi / 180
-	cos, sin := math.Cos(rad), math.Sin(rad)
-	// Inverse transform (dst→src) for clockwise rotation.
-	// Negative degrees produce counter-clockwise rotation.
-	m := f64.Aff3{
-		cos, -sin, cx*(1-cos) + cy*sin,
-		sin, cos, cy*(1-cos) - cx*sin,
-	}
-	dst := image.NewRGBA(b)
-	xdraw.BiLinear.Transform(dst, m, src, b, xdraw.Src, nil)
-	return dst
-}
-
 func toPNG(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
 	err := png.Encode(&buf, img)
 	return buf.Bytes(), err
 }
 
-func preRenderFrames() error {
-	log.Printf("tray: pre-rendering %d frames...", 2*4*numFrames)
-
-	var bases [2][4]*image.RGBA
-	for theme := range bases {
-		for step := range bases[theme] {
+func preRenderBases() error {
+	log.Printf("tray: pre-rendering %d base images...", 2*4)
+	for theme := range pngBases {
+		for step := range pngBases[theme] {
 			base, err := renderBase(palette[theme][step])
 			if err != nil {
 				return err
 			}
-			bases[theme][step] = base
+			data, err := toPNG(base)
+			if err != nil {
+				return err
+			}
+			pngBases[theme][step] = data
 		}
 	}
-
-	var wg sync.WaitGroup
-	errCh := make(chan error, 8)
-
-	for theme := range pngFrames {
-		for step := range pngFrames[theme] {
-			wg.Add(1)
-			go func(theme, step int) {
-				defer wg.Done()
-				base := bases[theme][step]
-				for f := range pngFrames[theme][step] {
-					rot := rotateImage(base, -float64(f)*frameStep)
-					data, err := toPNG(rot)
-					if err != nil {
-						errCh <- err
-						return
-					}
-					pngFrames[theme][step][f] = data
-				}
-			}(theme, step)
-		}
-	}
-
-	wg.Wait()
-	close(errCh)
-	if err := <-errCh; err != nil {
-		return err
-	}
-	log.Printf("tray: frame pre-render complete")
+	log.Printf("tray: base image render complete")
 	return nil
 }
 
-// frameIndex maps (theme, step, f) to a flat index in the C image table.
-func frameIndex(theme, step, f int) int {
-	return theme*4*numFrames + step*numFrames + f
+// colorIndex maps (theme, step) to a flat index in the color image table.
+func colorIndex(theme, step int) int {
+	return theme*4 + step
 }
 
-func loadFramesIntoCocoa() {
-	total := 2 * 4 * numFrames
-	C.preloadImagesInit(C.int(total))
-
-	var wg sync.WaitGroup
-	for theme := range pngFrames {
-		for step := range pngFrames[theme] {
-			wg.Add(1)
-			go func(theme, step int) {
-				defer wg.Done()
-				for f, data := range pngFrames[theme][step] {
-					idx := frameIndex(theme, step, f)
-					C.loadImageAtIndex(
-						C.int(idx),
-						(*C.uchar)(unsafe.Pointer(&data[0])),
-						C.int(len(data)),
-					)
-				}
-			}(theme, step)
+func loadColorImagesIntoCocoa() {
+	total := 2 * 4
+	C.preloadColorImagesInit(C.int(total))
+	for theme := range pngBases {
+		for step, data := range pngBases[theme] {
+			idx := colorIndex(theme, step)
+			C.loadColorImage(
+				C.int(idx),
+				(*C.uchar)(unsafe.Pointer(&data[0])),
+				C.int(len(data)),
+			)
 		}
 	}
-	wg.Wait()
-
-	// Free PNG bytes — NSImages are now loaded, these are no longer needed.
-	pngFrames = [2][4][numFrames][]byte{}
-	log.Printf("tray: NSImages loaded")
+	pngBases = [2][4][]byte{}
+	log.Printf("tray: color images loaded")
 }
 
 // Tray manages the macOS menu bar icon and menu.
@@ -214,10 +155,10 @@ func (t *Tray) SetCPU(pct float64) {
 	t.cpu.Store(int64(pct))
 }
 
-// Run pre-renders frames, loads them into Cocoa as NSImages, then starts the
-// NSApp run loop. Blocks until quit. Must be called from the main goroutine.
+// Run pre-renders base images, loads them into Cocoa, then starts the NSApp run loop.
+// Blocks until quit. Must be called from the main goroutine.
 func (t *Tray) Run(ctx context.Context) {
-	if err := preRenderFrames(); err != nil {
+	if err := preRenderBases(); err != nil {
 		log.Printf("tray: prerender: %v", err)
 		return
 	}
@@ -236,10 +177,8 @@ func (t *Tray) Run(ctx context.Context) {
 	C.addMenuItemCStr(quitLabel, C.int(menuItemQuit))
 	C.free(unsafe.Pointer(quitLabel))
 
-	// One-time cost: pre-load all frames as NSImages so the animate loop
-	// does a pointer swap instead of a PNG decode on each frame.
-	loadFramesIntoCocoa()
-	C.setIconIndex(0)
+	loadColorImagesIntoCocoa()
+	C.setIconFrame(0, 0)
 
 	go t.animate()
 	go t.handleEvents(ctx)
@@ -271,7 +210,7 @@ func (t *Tray) animate() {
 	defer ticker.Stop()
 	var angle, smoothedVel float64
 	last := time.Now()
-	lastTheme, lastStep, lastFrame := -1, -1, -1
+	lastTheme, lastStep := -1, -1
 	const velTau = 3.0
 
 	for range ticker.C {
@@ -289,12 +228,13 @@ func (t *Tray) animate() {
 			theme = 1
 		}
 		step := colorStep(cpu)
-		frameIdx := int(angle/frameStep) % numFrames
+		colorIdx := colorIndex(theme, step)
 
-		if theme == lastTheme && step == lastStep && frameIdx == lastFrame {
+		// Only skip if neither color nor motion changed.
+		if smoothedVel == 0 && theme == lastTheme && step == lastStep {
 			continue
 		}
-		C.setIconIndex(C.int(frameIndex(theme, step, frameIdx)))
-		lastTheme, lastStep, lastFrame = theme, step, frameIdx
+		C.setIconFrame(C.int(colorIdx), C.float(angle))
+		lastTheme, lastStep = theme, step
 	}
 }
