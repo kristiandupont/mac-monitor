@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -24,6 +25,10 @@ const (
 )
 
 func main() {
+	// Pin the main goroutine to OS thread 0. Cocoa requires all UI operations
+	// (NSStatusItem, NSMenu, NSApp) to run on the OS main thread.
+	runtime.LockOSThread()
+
 	db, err := storage.Open(dbPath)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
