@@ -6,8 +6,7 @@ A lightweight system monitor for macOS servers. Collects CPU, memory, GPU, disk,
 
 ```bash
 # Development (Go server on :8080, Vite dev server on :5173)
-go run ./cmd/mac-monitor &
-cd web && npm run dev
+make dev
 
 # Production
 make build        # builds web/dist then compiles the binary
@@ -44,24 +43,24 @@ The binary serves the compiled frontend from `web/dist/` and the database is wri
 
 ### Go packages
 
-| Path | Responsibility |
-|---|---|
-| `cmd/mac-monitor/` | Entrypoint. Wires together the collector, storage, and HTTP server. |
-| `internal/collector/` | Metric collection via [gopsutil](https://github.com/shirou/gopsutil). One file per domain: `collector.go` (Snapshot struct + orchestration), `gpu.go` (IOKit via `ioreg`), `disk.go`. |
-| `internal/storage/` | SQLite via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure Go, no CGo). Schema migration using `addColumnIfMissing` so new columns can be added without breaking existing databases. |
-| `internal/server/` | `net/http` server with a WebSocket hub for live metric streaming. Historical data served via `/api/history?from=&to=`. |
+| Path                  | Responsibility                                                                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cmd/mac-monitor/`    | Entrypoint. Wires together the collector, storage, and HTTP server.                                                                                                                                    |
+| `internal/collector/` | Metric collection via [gopsutil](https://github.com/shirou/gopsutil). One file per domain: `collector.go` (Snapshot struct + orchestration), `gpu.go` (IOKit via `ioreg`), `disk.go`.                  |
+| `internal/storage/`   | SQLite via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure Go, no CGo). Schema migration using `addColumnIfMissing` so new columns can be added without breaking existing databases. |
+| `internal/server/`    | `net/http` server with a WebSocket hub for live metric streaming. Historical data served via `/api/history?from=&to=`.                                                                                 |
 
 ### Frontend
 
 Built with [Vite](https://vitejs.dev/) and [CrankJS](https://crank.js.org/). CrankJS uses generator functions as components — the `for (props of this)` loop pattern is how components receive prop updates, and `this.flush()` must be called **inside** that loop (not before it) for effects like Chart.js updates to run on every render.
 
-| File | Responsibility |
-|---|---|
-| `web/src/App.jsx` | Root component. Owns the WebSocket connection, history buffer, and top-level layout. |
-| `web/src/components/LineChart.jsx` | Generic reusable Chart.js line chart. Accepts `datasets`, `yMax`, and `formatY` props. |
-| `web/src/components/MetricGauge.jsx` | Horizontal progress bar for a single metric (works with both percentages and bytes). |
-| `web/src/components/GpuCard.jsx` | GPU utilization and memory (parsed from `ioreg -rc IOAccelerator`). |
-| `web/src/components/DiskCard.jsx` | Disk space per user-facing volume (filters out internal APFS system volumes). |
+| File                                 | Responsibility                                                                         |
+| ------------------------------------ | -------------------------------------------------------------------------------------- |
+| `web/src/App.jsx`                    | Root component. Owns the WebSocket connection, history buffer, and top-level layout.   |
+| `web/src/components/LineChart.jsx`   | Generic reusable Chart.js line chart. Accepts `datasets`, `yMax`, and `formatY` props. |
+| `web/src/components/MetricGauge.jsx` | Horizontal progress bar for a single metric (works with both percentages and bytes).   |
+| `web/src/components/GpuCard.jsx`     | GPU utilization and memory (parsed from `ioreg -rc IOAccelerator`).                    |
+| `web/src/components/DiskCard.jsx`    | Disk space per user-facing volume (filters out internal APFS system volumes).          |
 
 ### Data flow
 
