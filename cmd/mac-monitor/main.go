@@ -11,12 +11,13 @@ import (
 	"mac-monitor/internal/collector"
 	"mac-monitor/internal/server"
 	"mac-monitor/internal/storage"
+	"mac-monitor/internal/tray"
 )
 
 const (
-	addr          = ":8080"
-	staticDir     = "web/dist"
-	dbPath        = "mac-monitor.db"
+	addr            = ":8080"
+	staticDir       = "web/dist"
+	dbPath          = "mac-monitor.db"
 	collectInterval = 5 * time.Second
 	pruneInterval   = time.Hour
 	retentionPeriod = 30 * 24 * time.Hour
@@ -33,28 +34,32 @@ func main() {
 	defer cancel()
 
 	hub := server.NewHub()
+	t := tray.New(cancel, addr)
 
-	go runCollector(ctx, db, hub)
+	go runCollector(ctx, db, hub, t)
 	go runPruner(ctx, db)
-
-	srv := server.New(db, hub, staticDir)
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		log.Printf("Listening on http://localhost%s", addr)
+		srv := server.New(db, hub, staticDir)
 		if err := srv.ListenAndServe(addr); err != nil {
 			log.Printf("server stopped: %v", err)
 			cancel()
 		}
 	}()
 
-	<-quit
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		cancel()
+	}()
+
+	t.Run(ctx) // blocks on main goroutine until quit
 	log.Println("Shutting down")
 }
 
-func runCollector(ctx context.Context, db *storage.DB, hub *server.Hub) {
+func runCollector(ctx context.Context, db *storage.DB, hub *server.Hub, t *tray.Tray) {
 	ticker := time.NewTicker(collectInterval)
 	defer ticker.Stop()
 	for {
@@ -71,6 +76,7 @@ func runCollector(ctx context.Context, db *storage.DB, hub *server.Hub) {
 				log.Printf("insert: %v", err)
 			}
 			hub.Broadcast(snap)
+			t.SetCPU(snap.CPUPercent)
 		}
 	}
 }
