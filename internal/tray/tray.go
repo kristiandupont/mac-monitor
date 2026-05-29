@@ -33,14 +33,20 @@ const (
 	animFPS   = 30
 )
 
-// palette[theme 0=light 1=dark][cpu step 0-3]
-var palette = [2][4]string{
-	{"#111111", "#882200", "#BB1100", "#DD0000"},
-	{"#EEEEEE", "#FF9999", "#FF4444", "#FF2222"},
+// baseColor[theme] is the icon color at low CPU (near-black / near-white).
+// hotColor[theme] is the fully-heated red at 100% CPU.
+// Between heatThreshold and 100% CPU the two are linearly interpolated.
+const heatThreshold = 50.0
+
+var baseColor = [2][3]float64{
+	{0x11 / 255.0, 0x11 / 255.0, 0x11 / 255.0}, // light: near-black
+	{0xEE / 255.0, 0xEE / 255.0, 0xEE / 255.0}, // dark: near-white
 }
 
-// pngBases holds 8 encoded PNGs (2 themes × 4 color steps). Cleared after loading.
-var pngBases [2][4][]byte
+var hotColor = [2][3]float64{
+	{0xDD / 255.0, 0x00 / 255.0, 0x00 / 255.0}, // light: deep red
+	{0xFF / 255.0, 0x22 / 255.0, 0x22 / 255.0}, // dark: bright red
+}
 
 var (
 	darkModeCached bool
@@ -56,18 +62,14 @@ func isDarkMode() bool {
 	return darkModeCached
 }
 
-// colorStep returns 0 for CPU < 80%; transitions through 3 steps in the top 20%.
-func colorStep(cpu float64) int {
-	switch {
-	case cpu < 80:
-		return 0
-	case cpu < 87:
-		return 1
-	case cpu < 93:
-		return 2
-	default:
-		return 3
-	}
+// interpolateColor returns an sRGB tint for the current CPU% and theme.
+// Below heatThreshold the icon stays at its base color; above it glides to red.
+func interpolateColor(cpu float64, theme int) (float32, float32, float32) {
+	t := math.Max(0, (cpu-heatThreshold)/(100-heatThreshold))
+	base, hot := baseColor[theme], hotColor[theme]
+	return float32(base[0] + t*(hot[0]-base[0])),
+		float32(base[1] + t*(hot[1]-base[1])),
+		float32(base[2] + t*(hot[2]-base[2]))
 }
 
 // angularVelocity returns degrees/second.
@@ -76,11 +78,14 @@ func angularVelocity(cpu float64) float64 {
 	if cpu < 0.5 {
 		return 0
 	}
-	return 0.015 * math.Pow(cpu, 2.2)
+	return 0.020 * math.Pow(cpu, 2.2)
 }
 
-func renderBase(hexColor string) (*image.RGBA, error) {
-	svg := strings.ReplaceAll(fanSVG, "currentColor", hexColor)
+// renderBasePNG renders the fan SVG in white and returns the PNG bytes.
+// The alpha channel of the rendered image is used as a CALayer mask; the
+// actual pixel color is irrelevant — only the shape matters.
+func renderBasePNG() ([]byte, error) {
+	svg := strings.ReplaceAll(fanSVG, "currentColor", "#FFFFFF")
 	icon, err := oksvg.ReadIconStream(strings.NewReader(svg))
 	if err != nil {
 		return nil, err
@@ -90,54 +95,11 @@ func renderBase(hexColor string) (*image.RGBA, error) {
 	scanner := rasterx.NewScannerGV(frameSize, frameSize, img, img.Bounds())
 	raster := rasterx.NewDasher(frameSize, frameSize, scanner)
 	icon.Draw(raster, 1.0)
-	return img, nil
-}
-
-func toPNG(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
-	err := png.Encode(&buf, img)
-	return buf.Bytes(), err
-}
-
-func preRenderBases() error {
-	log.Printf("tray: pre-rendering %d base images...", 2*4)
-	for theme := range pngBases {
-		for step := range pngBases[theme] {
-			base, err := renderBase(palette[theme][step])
-			if err != nil {
-				return err
-			}
-			data, err := toPNG(base)
-			if err != nil {
-				return err
-			}
-			pngBases[theme][step] = data
-		}
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
 	}
-	log.Printf("tray: base image render complete")
-	return nil
-}
-
-// colorIndex maps (theme, step) to a flat index in the color image table.
-func colorIndex(theme, step int) int {
-	return theme*4 + step
-}
-
-func loadColorImagesIntoCocoa() {
-	total := 2 * 4
-	C.preloadColorImagesInit(C.int(total))
-	for theme := range pngBases {
-		for step, data := range pngBases[theme] {
-			idx := colorIndex(theme, step)
-			C.loadColorImage(
-				C.int(idx),
-				(*C.uchar)(unsafe.Pointer(&data[0])),
-				C.int(len(data)),
-			)
-		}
-	}
-	pngBases = [2][4][]byte{}
-	log.Printf("tray: color images loaded")
+	return buf.Bytes(), nil
 }
 
 // Tray manages the macOS menu bar icon and menu.
@@ -155,11 +117,12 @@ func (t *Tray) SetCPU(pct float64) {
 	t.cpu.Store(int64(pct))
 }
 
-// Run pre-renders base images, loads them into Cocoa, then starts the NSApp run loop.
+// Run renders the base icon, loads it into Cocoa, then starts the NSApp run loop.
 // Blocks until quit. Must be called from the main goroutine.
 func (t *Tray) Run(ctx context.Context) {
-	if err := preRenderBases(); err != nil {
-		log.Printf("tray: prerender: %v", err)
+	baseData, err := renderBasePNG()
+	if err != nil {
+		log.Printf("tray: render base: %v", err)
 		return
 	}
 
@@ -177,8 +140,14 @@ func (t *Tray) Run(ctx context.Context) {
 	C.addMenuItemCStr(quitLabel, C.int(menuItemQuit))
 	C.free(unsafe.Pointer(quitLabel))
 
-	loadColorImagesIntoCocoa()
-	C.setIconFrame(0, 0)
+	C.loadBaseImage((*C.uchar)(unsafe.Pointer(&baseData[0])), C.int(len(baseData)))
+
+	theme := 0
+	if isDarkMode() {
+		theme = 1
+	}
+	r, g, b := interpolateColor(0, theme)
+	C.setIconFrame(C.float(0), C.float(r), C.float(g), C.float(b))
 
 	go t.animate()
 	go t.handleEvents(ctx)
@@ -208,10 +177,12 @@ func (t *Tray) handleEvents(ctx context.Context) {
 func (t *Tray) animate() {
 	ticker := time.NewTicker(time.Second / animFPS)
 	defer ticker.Stop()
-	var angle, smoothedVel float64
+	var angle, smoothedVel, smoothedCPU float64
 	last := time.Now()
-	lastTheme, lastStep := -1, -1
+	lastTheme := -1
+	lastSmoothedCPU := -1.0
 	const velTau = 3.0
+	const colorTau = 0.4
 
 	for range ticker.C {
 		now := time.Now()
@@ -219,22 +190,24 @@ func (t *Tray) animate() {
 		last = now
 
 		cpu := float64(t.cpu.Load())
-		alpha := 1 - math.Exp(-dt/velTau)
-		smoothedVel += alpha * (angularVelocity(cpu) - smoothedVel)
+
+		velAlpha := 1 - math.Exp(-dt/velTau)
+		smoothedVel += velAlpha * (angularVelocity(cpu) - smoothedVel)
 		angle = math.Mod(angle+smoothedVel*dt, 360)
+
+		colorAlpha := 1 - math.Exp(-dt/colorTau)
+		smoothedCPU += colorAlpha * (cpu - smoothedCPU)
 
 		theme := 0
 		if isDarkMode() {
 			theme = 1
 		}
-		step := colorStep(cpu)
-		colorIdx := colorIndex(theme, step)
 
-		// Only skip if neither color nor motion changed.
-		if smoothedVel == 0 && theme == lastTheme && step == lastStep {
+		if smoothedVel == 0 && theme == lastTheme && math.Abs(smoothedCPU-lastSmoothedCPU) < 0.1 {
 			continue
 		}
-		C.setIconFrame(C.int(colorIdx), C.float(angle))
-		lastTheme, lastStep = theme, step
+		r, g, b := interpolateColor(smoothedCPU, theme)
+		C.setIconFrame(C.float(angle), C.float(r), C.float(g), C.float(b))
+		lastTheme, lastSmoothedCPU = theme, smoothedCPU
 	}
 }

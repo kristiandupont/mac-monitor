@@ -3,4 +3,12 @@ Todo:
 - Customizable port
 - Per-process view — real-time only, no storage needed
 - Alerting — sustained high CPU/memory/etc. for X duration triggers a notification (need to decide: browser notification, webhook, email?)
-- Temperature — via powermetrics, works with sudo, shows a clear message otherwise
+- Ability to inspect more than the last hour in the charts.
+
+Testing:
+
+for i in {1..8}; do yes > /dev/null & done
+
+...
+
+killall yes

@@ -4,13 +4,11 @@
 
 extern void onMenuItemClicked(int itemID);
 
-static NSStatusItem* gItem            = nil;
-static NSMenu*       gMenu            = nil;
-static NSView*       gIconView        = nil;
-static CALayer*      gRotateLayer     = nil;
-static NSImage**     gColorImages     = nil;
-static int           gColorCount      = 0;
-static int           gCurrentColorIdx = -1;
+static NSStatusItem* gItem        = nil;
+static NSMenu*       gMenu        = nil;
+static NSView*       gIconView    = nil;
+static CALayer*      gRotateLayer = nil;
+static CALayer*      gMaskLayer   = nil;
 
 @interface MenuTarget : NSObject
 @end
@@ -34,10 +32,8 @@ void setupStatusItem(const char* tooltip) {
     gItem.button.wantsLayer = YES;
 
     // Layer-backed subview for the fan icon. We rotate a dedicated CALayer sublayer
-    // (gRotateLayer) rather than the NSView-backed layer itself. NSView-backed layers
-    // have anchorPoint={0,0} (AppKit manages position from the origin), so setting
-    // transform on them rotates around the corner. The sublayer has full control over
-    // its anchorPoint={0.5,0.5} so rotation is always around the icon's center.
+    // (gRotateLayer) rather than the NSView-backed layer itself — NSView-backed layers
+    // have anchorPoint={0,0} so rotation would be around the corner instead of center.
     gIconView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 22, 22)];
     gIconView.wantsLayer = YES;
     gIconView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -53,9 +49,15 @@ void setupStatusItem(const char* tooltip) {
     gRotateLayer.bounds = CGRectMake(0, 0, 22, 22);
     gRotateLayer.anchorPoint = CGPointMake(0.5, 0.5);
     gRotateLayer.position = CGPointMake(11, 11);
-    gRotateLayer.contentsGravity = kCAGravityResizeAspect;
-    gRotateLayer.contentsScale = [NSScreen mainScreen].backingScaleFactor;
     [gIconView.layer addSublayer:gRotateLayer];
+
+    // The fan image's alpha channel acts as a mask over backgroundColor.
+    // Tinting is then just updating backgroundColor — a free GPU property change.
+    gMaskLayer = [CALayer layer];
+    gMaskLayer.frame = gRotateLayer.bounds;
+    gMaskLayer.contentsGravity = kCAGravityResizeAspect;
+    gMaskLayer.contentsScale = [NSScreen mainScreen].backingScaleFactor;
+    gRotateLayer.mask = gMaskLayer;
 
     gMenu = [[NSMenu alloc] initWithTitle:@""];
     [gMenu setAutoenablesItems:NO];
@@ -71,30 +73,21 @@ void quitCocoaApp(void) {
     });
 }
 
-void preloadColorImagesInit(int count) {
-    gColorImages = (NSImage* __strong*)calloc(count, sizeof(NSImage*));
-    gColorCount = count;
-}
-
-void loadColorImage(int idx, const unsigned char* data, int len) {
-    if (idx < 0 || idx >= gColorCount) return;
+void loadBaseImage(const unsigned char* data, int len) {
     NSData*  nsdata = [NSData dataWithBytes:data length:len];
     NSImage* img    = [[NSImage alloc] initWithData:nsdata];
     [img setSize:NSMakeSize(22, 22)];
-    gColorImages[idx] = img;
+    gMaskLayer.contents = img;
 }
 
-void setIconFrame(int colorIdx, float angleDeg) {
-    if (colorIdx < 0 || colorIdx >= gColorCount || !gColorImages[colorIdx]) return;
-    int   capturedIdx   = colorIdx;
+void setIconFrame(float angleDeg, float r, float g, float b) {
     float capturedAngle = angleDeg;
+    float cr = r, cg = g, cb = b;
     dispatch_async(dispatch_get_main_queue(), ^{
         [CATransaction begin];
         [CATransaction setDisableActions:YES];
-        if (capturedIdx != gCurrentColorIdx) {
-            gRotateLayer.contents = gColorImages[capturedIdx];
-            gCurrentColorIdx = capturedIdx;
-        }
+        NSColor* tint = [NSColor colorWithSRGBRed:cr green:cg blue:cb alpha:1.0];
+        gRotateLayer.backgroundColor = tint.CGColor;
         float rad = capturedAngle * (float)M_PI / 180.0f;
         gRotateLayer.transform = CATransform3DMakeRotation(rad, 0, 0, 1);
         [CATransaction commit];
