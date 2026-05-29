@@ -2,6 +2,8 @@
 
 A lightweight system monitor for macOS servers. Collects CPU, memory, GPU, disk, and network metrics at 5-second intervals, stores them for up to 30 days, and exposes a web UI for both live and historical inspection.
 
+<img width="2850" height="2606" alt="image" src="https://github.com/user-attachments/assets/2040bf7a-f6a0-42f6-9905-cd6f3bfb2ce1" />
+
 ## Running
 
 ```bash
