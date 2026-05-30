@@ -11,5 +11,6 @@
 - `collector.go`: `Snapshot` type definition and `Collect()` entry point.
 - `disk.go`: Disk usage and I/O stats; `isUserFacingMount` filtering logic.
 - `gpu.go`: GPU utilization via `ioreg` plist parsing.
+- `processes.go`: `ProcessStat` type and `CollectProcesses()` — on-demand per-process CPU/memory snapshot. Maintains a package-level CPU-times cache so delta-based CPU% is accurate across repeated calls.
 
 **Relationships**: No dependencies on other internal packages. `Snapshot` type is imported by `internal/storage` and `internal/server`.

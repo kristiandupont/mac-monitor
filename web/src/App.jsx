@@ -5,9 +5,11 @@ import {LineChart} from "./components/LineChart.jsx";
 import {CpuChart} from "./components/CpuChart.jsx";
 import {GpuCard} from "./components/GpuCard.jsx";
 import {DiskCard} from "./components/DiskCard.jsx";
+import {ProcessTable} from "./components/ProcessTable.jsx";
 import {fmtTime, fmtBytes, netRates, diskIORates, primaryIface, primaryDisk} from "./utils.js";
 
 const MAX_HISTORY = 720; // 1 hour at 5s intervals
+const PROCESS_POLL_MS = 5000;
 
 // ── sections ─────────────────────────────────────────────────────────────────
 
@@ -29,9 +31,42 @@ function* App() {
   let history = [];
   let connected = false;
   let error = null;
+  let tab = "overview"; // "overview" | "processes"
+  let processes = null;
+  let cpuReady = false;
+  let procTimer = null;
 
   const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${wsProto}//${window.location.host}/api/live`);
+
+  const fetchProcesses = () => {
+    fetch("/api/processes")
+      .then(r => r.json())
+      .then(data => { processes = data?.processes ?? []; cpuReady = data?.cpu_ready ?? false; this.refresh(); })
+      .catch(() => {});
+  };
+
+  const startProcPolling = () => {
+    if (procTimer !== null) return;
+    fetchProcesses();
+    procTimer = setInterval(fetchProcesses, PROCESS_POLL_MS);
+  };
+
+  const stopProcPolling = () => {
+    if (procTimer === null) return;
+    clearInterval(procTimer);
+    procTimer = null;
+  };
+
+  const switchTab = (t) => {
+    tab = t;
+    if (t === "processes") {
+      startProcPolling();
+    } else {
+      stopProcPolling();
+    }
+    this.refresh();
+  };
 
   ws.onopen = () => {
     connected = true;
@@ -85,7 +120,7 @@ function* App() {
 
       yield (
         <div style="max-width: 1100px; margin: 0 auto; padding: 32px 24px;">
-          <header style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; border-bottom: 1px solid #21262d; padding-bottom: 16px;">
+          <header style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; border-bottom: 1px solid #21262d; padding-bottom: 16px;">
             <h1 style="font-size: 18px; font-weight: bold; color: #e6edf3; letter-spacing: 0.02em;">
               Mac Monitor
             </h1>
@@ -94,58 +129,77 @@ function* App() {
             </span>
           </header>
 
+          {/* ── tabs ── */}
+          <nav style="display: flex; gap: 4px; margin-bottom: 28px;">
+            {["overview", "processes"].map(t => (
+              <button
+                key={t}
+                onclick={() => switchTab(t)}
+                style={`padding: 6px 16px; border-radius: 20px; border: 1px solid ${tab === t ? "#58a6ff" : "#30363d"}; background: ${tab === t ? "#1c2d3f" : "transparent"}; color: ${tab === t ? "#58a6ff" : "#8b949e"}; font-size: 13px; cursor: pointer; text-transform: capitalize;`}
+              >
+                {t}
+              </button>
+            ))}
+          </nav>
+
           {snap ? (
-            <div>
-              {/* ── metric cards ── */}
-              <section style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; margin-bottom: 28px;">
-                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
-                  <h2 style="font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px;">CPU</h2>
-                  <MetricGauge label="Total" value={snap.cpu_percent} color="#58a6ff" />
-                  <LoadAvg load1={snap.load_1} load5={snap.load_5} load15={snap.load_15} />
-                  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 3px; margin-top: 10px;">
-                    {snap.cpu_per_core.map((pct, i) => (
-                      <div key={i} title={`Core ${i}: ${pct.toFixed(1)}%`}
-                        style={`height: 28px; background: rgba(88,166,255,${(pct / 100).toFixed(2)}); border: 1px solid #30363d; border-radius: 3px;`}
-                      />
-                    ))}
+            tab === "overview" ? (
+              <div>
+                {/* ── metric cards ── */}
+                <section style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; margin-bottom: 28px;">
+                  <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
+                    <h2 style="font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px;">CPU</h2>
+                    <MetricGauge label="Total" value={snap.cpu_percent} color="#58a6ff" />
+                    <LoadAvg load1={snap.load_1} load5={snap.load_5} load15={snap.load_15} />
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 3px; margin-top: 10px;">
+                      {snap.cpu_per_core.map((pct, i) => (
+                        <div key={i} title={`Core ${i}: ${pct.toFixed(1)}%`}
+                          style={`height: 28px; background: rgba(88,166,255,${(pct / 100).toFixed(2)}); border: 1px solid #30363d; border-radius: 3px;`}
+                        />
+                      ))}
+                    </div>
                   </div>
+
+                  <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
+                    <h2 style="font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px;">Memory</h2>
+                    <MetricGauge label="RAM"  value={snap.mem_used}  max={snap.mem_total}  color="#3fb950" />
+                    <MetricGauge label="Swap" value={snap.swap_used} max={snap.swap_total} color="#d29922" />
+                  </div>
+
+                  <GpuCard gpuStats={snap.gpu_stats} />
+                  <DiskCard diskStats={snap.disk_stats} />
+                </section>
+
+                {/* ── charts ── */}
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px;">
+                  <ChartSection title="CPU History (last hour)">
+                    <CpuChart history={history} />
+                  </ChartSection>
+
+                  {gpuDatasets && (
+                    <ChartSection title="GPU History (last hour)">
+                      <LineChart datasets={gpuDatasets} yMax={100} formatY={v => `${v.toFixed(0)}%`} />
+                    </ChartSection>
+                  )}
                 </div>
 
-                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
-                  <h2 style="font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px;">Memory</h2>
-                  <MetricGauge label="RAM"  value={snap.mem_used}  max={snap.mem_total}  color="#3fb950" />
-                  <MetricGauge label="Swap" value={snap.swap_used} max={snap.swap_total} color="#d29922" />
-                </div>
+                {netDatasets && (
+                  <ChartSection title={`Network — ${iface}`}>
+                    <LineChart datasets={netDatasets} formatY={fmtBytes} />
+                  </ChartSection>
+                )}
 
-                <GpuCard gpuStats={snap.gpu_stats} />
-                <DiskCard diskStats={snap.disk_stats} />
-              </section>
-
-              {/* ── charts ── */}
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px;">
-                <ChartSection title="CPU History (last hour)">
-                  <CpuChart history={history} />
-                </ChartSection>
-
-                {gpuDatasets && (
-                  <ChartSection title="GPU History (last hour)">
-                    <LineChart datasets={gpuDatasets} yMax={100} formatY={v => `${v.toFixed(0)}%`} />
+                {diskIODatasets && (
+                  <ChartSection title={`Disk I/O — ${disk}`}>
+                    <LineChart datasets={diskIODatasets} formatY={fmtBytes} />
                   </ChartSection>
                 )}
               </div>
-
-              {netDatasets && (
-                <ChartSection title={`Network — ${iface}`}>
-                  <LineChart datasets={netDatasets} formatY={fmtBytes} />
-                </ChartSection>
-              )}
-
-              {diskIODatasets && (
-                <ChartSection title={`Disk I/O — ${disk}`}>
-                  <LineChart datasets={diskIODatasets} formatY={fmtBytes} />
-                </ChartSection>
-              )}
-            </div>
+            ) : (
+              <section style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
+                <ProcessTable processes={processes} cpuReady={cpuReady} />
+              </section>
+            )
           ) : (
             <p style="color: #8b949e; text-align: center; padding: 60px 0;">
               {error || "Waiting for first data point…"}
@@ -155,6 +209,7 @@ function* App() {
       );
     }
   } finally {
+    stopProcPolling();
     ws.close();
   }
 }

@@ -66,6 +66,7 @@ func New(db *storage.DB, hub *Hub, staticDir string) *Server {
 	s.mux.HandleFunc("/api/live", s.handleLive)
 	s.mux.HandleFunc("/api/history", s.handleHistory)
 	s.mux.HandleFunc("/api/latest", s.handleLatest)
+	s.mux.HandleFunc("/api/processes", s.handleProcesses)
 	s.mux.Handle("/", http.FileServer(http.Dir(staticDir)))
 	return s
 }
@@ -141,4 +142,17 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(snap)
+}
+
+func (s *Server) handleProcesses(w http.ResponseWriter, r *http.Request) {
+	procs, cpuReady, err := collector.CollectProcesses()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		CPUReady  bool                   `json:"cpu_ready"`
+		Processes []collector.ProcessStat `json:"processes"`
+	}{CPUReady: cpuReady, Processes: procs})
 }

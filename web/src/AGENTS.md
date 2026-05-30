@@ -12,4 +12,7 @@
 - `utils.js`: Pure data-transform and formatting helpers; all unit-tested.
 - `main.jsx`: Entry point — mounts `App` into the DOM.
 
-**Relationships**: Pulls data from Go server at `/api/live` (WS) and `/api/history` (HTTP). Components in `./components/`.
+**Notes**:
+- Tab state (`overview` / `processes`) lives in `App.jsx`. The process poller (`setInterval` on `/api/processes`) starts only when the processes tab is active and is cleared on tab switch or unmount.
+
+**Relationships**: Pulls data from Go server at `/api/live` (WS), `/api/history` (HTTP), and `/api/processes` (HTTP, polled every 5 s only while processes tab is active). Components in `./components/`.

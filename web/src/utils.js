@@ -12,6 +12,13 @@ export function fmtBytes(b) {
   return b.toFixed(0) + " B/s";
 }
 
+export function fmtSize(b) {
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + " GB";
+  if (b >= 1048576)    return (b / 1048576).toFixed(1) + " MB";
+  if (b >= 1024)       return (b / 1024).toFixed(1) + " KB";
+  return b + " B";
+}
+
 // Returns [{in, out}] byte/s rates aligned to history[1..] (one fewer entry than history).
 export function netRates(history, ifaceName) {
   const rates = [];

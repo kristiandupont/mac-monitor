@@ -8,6 +8,9 @@
 - Static files are served directly from the `web/dist` directory passed at construction time.
 
 **Key Files**:
-- `server.go`: Only file — `Hub`, `Server`, WebSocket handler, history/latest HTTP handlers.
+- `server.go`: Only file — `Hub`, `Server`, WebSocket handler, history/latest/processes HTTP handlers.
 
-**Relationships**: Depends on `internal/storage` for history queries and `internal/collector.Snapshot` as the broadcast payload.
+**Notes**:
+- `/api/processes` calls `collector.CollectProcesses()` on each request — no background goroutine; CPU cost is zero when the tab is not open.
+
+**Relationships**: Depends on `internal/storage` for history queries and `internal/collector.Snapshot` as the broadcast payload. `/api/processes` calls `collector.CollectProcesses()` directly.
