@@ -3,10 +3,9 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -15,12 +14,11 @@ import (
 	"mac-monitor/internal/server"
 	"mac-monitor/internal/storage"
 	"mac-monitor/internal/tray"
+	"mac-monitor/internal/webui"
 )
 
 const (
 	addr            = ":8080"
-	staticDir       = "web/dist"
-	dbPath          = "mac-monitor.db"
 	collectInterval = 5 * time.Second
 	pruneInterval   = time.Hour
 	retentionPeriod = 30 * 24 * time.Hour
@@ -31,7 +29,7 @@ func main() {
 	// (NSStatusItem, NSMenu, NSApp) to run on the OS main thread.
 	runtime.LockOSThread()
 
-	db, err := storage.Open(dbPath)
+	db, err := storage.Open(dbPath())
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
@@ -48,16 +46,11 @@ func main() {
 
 	go func() {
 		log.Printf("Listening on http://localhost%s", addr)
-		srv := server.New(db, hub, staticDir)
+		srv := server.New(db, hub, webui.FS())
 		if err := srv.ListenAndServe(addr); err != nil {
 			log.Printf("server stopped: %v", err)
 			cancel()
 		}
-	}()
-
-	go func() {
-		log.Println("pprof listening on http://localhost:6060/debug/pprof/")
-		http.ListenAndServe("localhost:6060", nil)
 	}()
 
 	go func() {
@@ -69,6 +62,18 @@ func main() {
 
 	t.Run(ctx) // blocks on main goroutine until quit
 	log.Println("Shutting down")
+}
+
+func dbPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "mac-monitor.db"
+	}
+	dir := filepath.Join(home, "Library", "Application Support", "Mac Monitor")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "mac-monitor.db"
+	}
+	return filepath.Join(dir, "mac-monitor.db")
 }
 
 func runCollector(ctx context.Context, db *storage.DB, hub *server.Hub, t *tray.Tray) {

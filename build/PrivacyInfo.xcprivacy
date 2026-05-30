@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <!-- gopsutil reads available disk space for the disk metrics feature -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>85F4.1</string>
+            </array>
+        </dict>
+
+        <!-- gopsutil reads system boot time to compute uptime -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>35F9.1</string>
+            </array>
+        </dict>
+
+        <!-- gopsutil reads file timestamps when enumerating process info -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>DDA9.1</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

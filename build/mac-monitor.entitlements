@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required for Mac App Store distribution -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- The embedded HTTP server needs to bind a port -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- Allows the app to open its own web UI in the default browser -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

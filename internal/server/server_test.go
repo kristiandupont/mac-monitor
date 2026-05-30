@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 		t.Fatalf("storage.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return New(db, NewHub(), "."), db
+	return New(db, NewHub(), os.DirFS(".")), db
 }
 
 func emptySnap(ts int64) *collector.Snapshot {

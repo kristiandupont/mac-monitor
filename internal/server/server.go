@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net/http"
 	"strconv"
@@ -61,13 +62,13 @@ type Server struct {
 	mux *http.ServeMux
 }
 
-func New(db *storage.DB, hub *Hub, staticDir string) *Server {
+func New(db *storage.DB, hub *Hub, static fs.FS) *Server {
 	s := &Server{db: db, hub: hub, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/api/live", s.handleLive)
 	s.mux.HandleFunc("/api/history", s.handleHistory)
 	s.mux.HandleFunc("/api/latest", s.handleLatest)
 	s.mux.HandleFunc("/api/processes", s.handleProcesses)
-	s.mux.Handle("/", http.FileServer(http.Dir(staticDir)))
+	s.mux.Handle("/", http.FileServer(http.FS(static)))
 	return s
 }
 
