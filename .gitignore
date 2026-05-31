@@ -16,3 +16,4 @@ build/AppIcon.svg
 
 # App bundle produced by 'make app'
 Mac Monitor.app/
+.DS_Store
