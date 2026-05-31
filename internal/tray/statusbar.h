@@ -9,4 +9,14 @@ void loadBaseImage(const unsigned char* data, int len);
 void setIconFrame(float angleDeg, float r, float g, float b);
 
 void addMenuItemCStr(const char* title, int itemID);
+void addCheckboxMenuItemCStr(const char* title, int itemID, int checked);
+void setMenuItemChecked(int itemID, int checked);
 void addMenuSeparatorItem(void);
+
+// NSUserDefaults persistence helpers.
+void saveUserDefaultBool(const char* key, int value);
+int  loadUserDefaultBool(const char* key, int defaultValue);
+
+// Launch-at-login via SMAppService (requires running inside an .app bundle).
+void setLaunchAtLogin(int enable);
+int  getLaunchAtLogin(void);

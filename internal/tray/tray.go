@@ -2,7 +2,7 @@ package tray
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Cocoa -framework QuartzCore
+#cgo LDFLAGS: -framework Cocoa -framework QuartzCore -framework ServiceManagement
 #include "statusbar.h"
 #include <stdlib.h>
 */
@@ -104,9 +104,10 @@ func renderBasePNG() ([]byte, error) {
 
 // Tray manages the macOS menu bar icon and menu.
 type Tray struct {
-	cpu    atomic.Int64 // 0–100
-	cancel func()
-	addr   string
+	cpu         atomic.Int64 // 0–100
+	animateIcon atomic.Bool
+	cancel      func()
+	addr        string
 }
 
 func New(cancel func(), addr string) *Tray {
@@ -135,6 +136,22 @@ func (t *Tray) Run(ctx context.Context) {
 	openLabel := C.CString("Open Dashboard")
 	C.addMenuItemCStr(openLabel, C.int(menuItemOpen))
 	C.free(unsafe.Pointer(openLabel))
+
+	C.addMenuSeparatorItem()
+
+	animKey := C.CString("animateIcon")
+	animOn := int(C.loadUserDefaultBool(animKey, 1)) != 0
+	C.free(unsafe.Pointer(animKey))
+	t.animateIcon.Store(animOn)
+	animLabel := C.CString("Animate Icon")
+	C.addCheckboxMenuItemCStr(animLabel, C.int(menuItemAnimateIcon), boolToInt(animOn))
+	C.free(unsafe.Pointer(animLabel))
+
+	launchOn := int(C.getLaunchAtLogin()) != 0
+	launchLabel := C.CString("Launch at Login")
+	C.addCheckboxMenuItemCStr(launchLabel, C.int(menuItemLaunchAtLogin), boolToInt(launchOn))
+	C.free(unsafe.Pointer(launchLabel))
+
 	C.addMenuSeparatorItem()
 	quitLabel := C.CString("Quit")
 	C.addMenuItemCStr(quitLabel, C.int(menuItemQuit))
@@ -155,6 +172,13 @@ func (t *Tray) Run(ctx context.Context) {
 	C.runCocoaApp() // blocks until quitCocoaApp is called
 }
 
+func boolToInt(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (t *Tray) handleEvents(ctx context.Context) {
 	for {
 		select {
@@ -165,6 +189,19 @@ func (t *Tray) handleEvents(ctx context.Context) {
 			switch itemID {
 			case menuItemOpen:
 				exec.Command("open", "http://localhost"+t.addr).Run() //nolint:errcheck
+			case menuItemAnimateIcon:
+				next := !t.animateIcon.Load()
+				t.animateIcon.Store(next)
+				C.setMenuItemChecked(C.int(menuItemAnimateIcon), boolToInt(next))
+				key := C.CString("animateIcon")
+				C.saveUserDefaultBool(key, boolToInt(next))
+				C.free(unsafe.Pointer(key))
+			case menuItemLaunchAtLogin:
+				next := int(C.getLaunchAtLogin()) == 0 // toggle
+				C.setLaunchAtLogin(boolToInt(next))
+				// Re-read the actual state in case registration failed.
+				actual := int(C.getLaunchAtLogin()) != 0
+				C.setMenuItemChecked(C.int(menuItemLaunchAtLogin), boolToInt(actual))
 			case menuItemQuit:
 				t.cancel()
 				C.quitCocoaApp()
@@ -181,6 +218,7 @@ func (t *Tray) animate() {
 	last := time.Now()
 	lastTheme := -1
 	lastSmoothedCPU := -1.0
+	lastAnimating := true
 	const velTau = 3.0
 	const colorTau = 0.4
 
@@ -190,10 +228,16 @@ func (t *Tray) animate() {
 		last = now
 
 		cpu := float64(t.cpu.Load())
+		animating := t.animateIcon.Load()
 
-		velAlpha := 1 - math.Exp(-dt/velTau)
-		smoothedVel += velAlpha * (angularVelocity(cpu) - smoothedVel)
-		angle = math.Mod(angle+smoothedVel*dt, 360)
+		if animating {
+			velAlpha := 1 - math.Exp(-dt/velTau)
+			smoothedVel += velAlpha * (angularVelocity(cpu) - smoothedVel)
+			angle = math.Mod(angle+smoothedVel*dt, 360)
+		} else {
+			smoothedVel = 0
+			angle = 0
+		}
 
 		colorAlpha := 1 - math.Exp(-dt/colorTau)
 		smoothedCPU += colorAlpha * (cpu - smoothedCPU)
@@ -203,7 +247,10 @@ func (t *Tray) animate() {
 			theme = 1
 		}
 
-		if smoothedVel == 0 && theme == lastTheme && math.Abs(smoothedCPU-lastSmoothedCPU) < 0.1 {
+		animChanged := animating != lastAnimating
+		lastAnimating = animating
+
+		if !animChanged && smoothedVel == 0 && theme == lastTheme && math.Abs(smoothedCPU-lastSmoothedCPU) < 0.1 {
 			continue
 		}
 		r, g, b := interpolateColor(smoothedCPU, theme)

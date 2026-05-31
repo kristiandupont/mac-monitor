@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
+#import <ServiceManagement/ServiceManagement.h>
 #include "statusbar.h"
 
 extern void onMenuItemClicked(int itemID);
@@ -105,6 +106,57 @@ void addMenuItemCStr(const char* title, int itemID) {
     [gMenu addItem:item];
 }
 
+void addCheckboxMenuItemCStr(const char* title, int itemID, int checked) {
+    NSMenuItem* item = [[NSMenuItem alloc]
+        initWithTitle:[NSString stringWithUTF8String:title]
+        action:@selector(menuItemClicked:)
+        keyEquivalent:@""];
+    item.target  = gTarget;
+    item.tag     = itemID;
+    item.enabled = YES;
+    item.state   = checked ? NSControlStateValueOn : NSControlStateValueOff;
+    [gMenu addItem:item];
+}
+
+void setMenuItemChecked(int itemID, int checked) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSMenuItem* item = [gMenu itemWithTag:itemID];
+        if (item) {
+            item.state = checked ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+    });
+}
+
 void addMenuSeparatorItem(void) {
     [gMenu addItem:[NSMenuItem separatorItem]];
+}
+
+void saveUserDefaultBool(const char* key, int value) {
+    NSString* k = [NSString stringWithUTF8String:key];
+    [[NSUserDefaults standardUserDefaults] setBool:(BOOL)value forKey:k];
+}
+
+int loadUserDefaultBool(const char* key, int defaultValue) {
+    NSString* k = [NSString stringWithUTF8String:key];
+    if (![[NSUserDefaults standardUserDefaults] objectForKey:k]) {
+        return defaultValue;
+    }
+    return [[NSUserDefaults standardUserDefaults] boolForKey:k] ? 1 : 0;
+}
+
+void setLaunchAtLogin(int enable) {
+    SMAppService* service = [SMAppService mainAppService];
+    NSError* error = nil;
+    if (enable) {
+        [service registerAndReturnError:&error];
+    } else {
+        [service unregisterAndReturnError:&error];
+    }
+    if (error) {
+        NSLog(@"Launch at login: %@", error);
+    }
+}
+
+int getLaunchAtLogin(void) {
+    return [SMAppService mainAppService].status == SMAppServiceStatusEnabled ? 1 : 0;
 }

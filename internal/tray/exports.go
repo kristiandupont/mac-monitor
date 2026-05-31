@@ -9,8 +9,10 @@ import "C"
 var menuClickCh = make(chan int, 4)
 
 const (
-	menuItemOpen = 1
-	menuItemQuit = 2
+	menuItemOpen           = 1
+	menuItemQuit           = 2
+	menuItemAnimateIcon    = 3
+	menuItemLaunchAtLogin  = 4
 )
 
 //export onMenuItemClicked
