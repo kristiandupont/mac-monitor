@@ -1,4 +1,4 @@
-.PHONY: build run dev deps web-build icons app clean
+.PHONY: build run dev deps web-build lock icons app clean
 
 BUNDLE     = Mac Monitor.app
 BUNDLE_ID  = com.kristiandupont.mac-monitor
@@ -6,6 +6,11 @@ BUNDLE_ID  = com.kristiandupont.mac-monitor
 deps:
 	go mod tidy
 	cd web && npm install
+
+# Regenerate web/package-lock.json on Linux so CI gets all platform-specific
+# optional deps (e.g. @emnapi/core) that macOS npm omits. Run after any npm install.
+lock:
+	docker run --rm -v "$(CURDIR)/web":/app -w /app node:24 npm install
 
 web-build:
 	cd web && npm run build
