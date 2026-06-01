@@ -1,7 +1,11 @@
 // ── AnimatedIcon ──────────────────────────────────────────────────────────────
 // Rotates the Mac Monitor icon, varying speed and color with simulated CPU load.
 // phase=0 → slow+blue (idle), phase=1 → fast+red (busy).
-function* AnimatedIcon({ size = 48, cold = [88, 166, 255], hot = [248, 81, 73] }) {
+function* AnimatedIcon({
+  size = 48,
+  cold = [88, 166, 255],
+  hot = [248, 81, 73],
+}) {
   let angle = 0;
   let phase = 0;
   let phaseDir = 1;
@@ -317,8 +321,8 @@ function App() {
               A Subtle Signal
             </h2>
             <p style="color:#8b949e;line-height:1.85;max-width:420px;font-size:15px;">
-              Fanless Macs like the Air can run at high CPU load silently — you
-              won't notice until your lap is burning. Mac Monitor's menu bar
+              Fanless Macs like the Air can run at high CPU load silently and
+              you won't notice until your lap is burning. Mac Monitor's menu bar
               icon rotates slowly when things are calm, and spins faster as the
               load builds. It's subtle enough to ignore, until you don't.
             </p>
@@ -330,13 +334,13 @@ function App() {
           <div>
             <div class="section-label">Web Dashboard</div>
             <h2 style="font-size:clamp(22px,3.5vw,34px);font-weight:200;color:#e6edf3;margin-bottom:18px;line-height:1.2;">
-              Monitor From Anywhere
+              Monitor Remotely
             </h2>
             <p style="color:#8b949e;line-height:1.85;max-width:420px;font-size:15px;">
               Got a Mac Mini running your personal AI agent in the utility room?
-              Mac Monitor serves a full web dashboard over your local network —
-              CPU, memory, GPU, disk, and network, updated live every five
-              seconds. Check in from any browser on any device.
+              Mac Monitor serves a web dashboard over your local network. CPU,
+              memory, GPU, disk, and network, updated live every five seconds.
+              Check in from the browser.
             </p>
           </div>
           <div
@@ -350,6 +354,22 @@ function App() {
               style="border-radius:8px;box-shadow:0 8px 48px rgba(0,0,0,0.6),0 1px 0 rgba(255,255,255,0.04) inset;max-width:100%;height:auto;"
             />
           </div>
+        </section>
+
+        {/* ── Low CPU cost ── */}
+        <section style="text-align:center;margin:64px 0;">
+          <h2 style="font-size:clamp(22px,3.5vw,34px);font-weight:200;color:#e6edf3;margin-bottom:18px;line-height:1.2;">
+            Lightweight
+          </h2>
+          <p style="color:#8b949e;line-height:1.85;max-width:600px;margin:0 auto;font-size:15px;">
+            Mac Monitor is built in Go. The menu bar component is optimized to
+            use minimal CPU resources, so it can run continuously without
+            impacting your system's performance. The process view only costs CPU
+            cycles when you're actively looking at it. So while Activity Monitor
+            can spike to 20% or more when you open it, Mac Monitor's dashboard
+            typically uses around 1-2% CPU, even with live charts and updates
+            every few seconds.
+          </p>
         </section>
       </main>
 
