@@ -1,7 +1,7 @@
 // ── AnimatedIcon ──────────────────────────────────────────────────────────────
 // Rotates the Mac Monitor icon, varying speed and color with simulated CPU load.
 // phase=0 → slow+blue (idle), phase=1 → fast+red (busy).
-function* AnimatedIcon({ size = 48 }) {
+function* AnimatedIcon({ size = 48, cold = [88, 166, 255], hot = [248, 81, 73] }) {
   let angle = 0;
   let phase = 0;
   let phaseDir = 1;
@@ -22,10 +22,9 @@ function* AnimatedIcon({ size = 48 }) {
 
   try {
     while (true) {
-      // Interpolate: blue #58a6ff (88,166,255) → red #f85149 (248,81,73)
-      const r = Math.round(88 + 160 * phase);
-      const g = Math.round(166 - 85 * phase);
-      const b = Math.round(255 - 182 * phase);
+      const r = Math.round(cold[0] + (hot[0] - cold[0]) * phase);
+      const g = Math.round(cold[1] + (hot[1] - cold[1]) * phase);
+      const b = Math.round(cold[2] + (hot[2] - cold[2]) * phase);
       const color = `rgb(${r},${g},${b})`;
       const blur = Math.round(4 + 12 * phase);
       const ga = (0.35 + 0.5 * phase).toFixed(2);
@@ -120,7 +119,7 @@ function MenuBarDemo() {
           />
         </svg>
         {/* The icon */}
-        <AnimatedIcon size={18} />
+        <AnimatedIcon size={18} cold={[255, 255, 255]} />
         {/* Clock */}
         <span style="opacity:0.7;font-variant-numeric:tabular-nums;min-width:34px;text-align:right;">
           10:42
@@ -346,7 +345,7 @@ function App() {
           >
             {/* <DashboardMockup /> */}
             <img
-              src="/screenshot.png"
+              src={import.meta.env.BASE_URL + "screenshot.png"}
               alt="Screenshot of the Mac Monitor web dashboard, showing CPU, memory, and GPU usage."
               style="border-radius:8px;box-shadow:0 8px 48px rgba(0,0,0,0.6),0 1px 0 rgba(255,255,255,0.04) inset;max-width:100%;height:auto;"
             />
