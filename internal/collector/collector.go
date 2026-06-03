@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -8,6 +9,17 @@ import (
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 )
+
+// safeNetIOCounters wraps net.IOCounters to recover from panics in gopsutil's
+// netstat parser, which can panic on malformed netstat output lines.
+func safeNetIOCounters(pernic bool) (counters []net.IOCountersStat, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("net.IOCounters panic: %v", r)
+		}
+	}()
+	return net.IOCounters(pernic)
+}
 
 type NetStat struct {
 	Name        string `json:"name"`
@@ -77,7 +89,7 @@ func Collect() (*Snapshot, error) {
 	snap.Load5 = avg.Load5
 	snap.Load15 = avg.Load15
 
-	counters, err := net.IOCounters(true)
+	counters, err := safeNetIOCounters(true)
 	if err != nil {
 		return nil, err
 	}
