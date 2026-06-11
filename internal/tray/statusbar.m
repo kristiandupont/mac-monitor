@@ -160,3 +160,10 @@ void setLaunchAtLogin(int enable) {
 int getLaunchAtLogin(void) {
     return [SMAppService mainAppService].status == SMAppServiceStatusEnabled ? 1 : 0;
 }
+
+int appIsDarkMode(void) {
+    NSAppearanceName best = [NSApp.effectiveAppearance bestMatchFromAppearancesWithNames:@[
+        NSAppearanceNameAqua, NSAppearanceNameDarkAqua
+    ]];
+    return [best isEqualToString:NSAppearanceNameDarkAqua] ? 1 : 0;
+}

@@ -1,7 +1,8 @@
-.PHONY: build run dev deps web-build lock icons app clean
+.PHONY: build run dev deps web-build lock icons app pkg clean
 
 BUNDLE     = Mac Monitor.app
 BUNDLE_ID  = com.kristiandupont.mac-monitor
+TEAM_ID   ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep "3rd Party Mac Developer Application" | sed 's/.*(\(.*\))/\1/' | head -1)
 
 deps:
 	go mod tidy
@@ -53,5 +54,22 @@ app: build icons
 	@echo "    --sign 'Developer ID Application: Your Name (TEAMID)' \\"
 	@echo "    $(BUNDLE)"
 
+# Build a signed .pkg for Mac App Store submission.
+# Requires "3rd Party Mac Developer Application" and "3rd Party Mac Developer Installer"
+# certificates installed in Keychain, and a Mac App Store provisioning profile at
+# build/mac-monitor.provisionprofile (downloaded from developer.apple.com).
+pkg: app
+	@if [ -z "$(TEAM_ID)" ]; then \
+	  echo "ERROR: Could not detect team ID. Run: make pkg TEAM_ID=XXXXXXXXXX"; exit 1; fi
+	cp build/mac-monitor.provisionprofile "$(BUNDLE)/Contents/embedded.provisionprofile"
+	codesign --deep --force --options runtime \
+	  --entitlements build/mac-monitor.entitlements \
+	  --sign "3rd Party Mac Developer Application: Kristian Dupont ($(TEAM_ID))" \
+	  "$(BUNDLE)"
+	productbuild --component "$(BUNDLE)" /Applications \
+	  --sign "3rd Party Mac Developer Installer: Kristian Dupont ($(TEAM_ID))" \
+	  mac-monitor.pkg
+	@echo "Built mac-monitor.pkg — upload via Transporter or: xcrun altool --upload-app -f mac-monitor.pkg"
+
 clean:
-	rm -rf mac-monitor $(BUNDLE) internal/webui/dist build/AppIcon.icns build/AppIcon.iconset build/AppIcon.svg
+	rm -rf mac-monitor mac-monitor.pkg $(BUNDLE) internal/webui/dist build/AppIcon.icns build/AppIcon.iconset build/AppIcon.svg

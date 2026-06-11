@@ -48,18 +48,8 @@ var hotColor = [2][3]float64{
 	{0xFF / 255.0, 0x22 / 255.0, 0x22 / 255.0}, // dark: bright red
 }
 
-var (
-	darkModeCached bool
-	darkModeAt     time.Time
-)
-
 func isDarkMode() bool {
-	if time.Since(darkModeAt) > 5*time.Second {
-		out, _ := exec.Command("defaults", "read", "-g", "AppleInterfaceStyle").Output()
-		darkModeCached = strings.TrimSpace(string(out)) == "Dark"
-		darkModeAt = time.Now()
-	}
-	return darkModeCached
+	return C.appIsDarkMode() != 0
 }
 
 // interpolateColor returns an sRGB tint for the current CPU% and theme.

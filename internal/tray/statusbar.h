@@ -20,3 +20,6 @@ int  loadUserDefaultBool(const char* key, int defaultValue);
 // Launch-at-login via SMAppService (requires running inside an .app bundle).
 void setLaunchAtLogin(int enable);
 int  getLaunchAtLogin(void);
+
+// Returns 1 if the current appearance is Dark Aqua, 0 otherwise.
+int  appIsDarkMode(void);
