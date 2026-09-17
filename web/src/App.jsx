@@ -21,7 +21,6 @@ const PROCESS_POLL_MS = 5000;
 const COLLECT_INTERVAL = 5; // seconds, matches the Go collector
 const TARGET_POINTS = 800; // per chart; wider spans are downsampled server-side
 const MIN_SPAN = 5 * 60;
-const MAX_SPAN = 31 * 86400;
 const FETCH_DEBOUNCE_MS = 200;
 const PRESETS = [
   ["15m", 15 * 60],
@@ -67,6 +66,7 @@ function* App() {
   let loaded = { from: 0, to: 0, step: 0, fetchedAt: 0 };
   let fetchSeq = 0;
   let fetchTimer = null;
+  let maxSpan = 86400; // replaced by the server's retention from /api/config
   let connected = false;
   let error = null;
   let tab = "overview"; // "overview" | "processes"
@@ -146,9 +146,9 @@ function* App() {
   };
 
   const setView = (newSpan, newEnd) => {
-    span = Math.min(MAX_SPAN, Math.max(MIN_SPAN, newSpan));
+    span = Math.min(maxSpan, Math.max(MIN_SPAN, newSpan));
     const now = nowSec();
-    end = newEnd == null || newEnd >= now ? null : Math.max(newEnd, now - MAX_SPAN + span);
+    end = newEnd == null || newEnd >= now ? null : Math.max(newEnd, now - maxSpan + span);
     const [from, to] = viewRange();
     const covered = from >= loaded.from && (end === null || to <= loaded.to);
     if (stepFor(span) !== loaded.step || !covered) scheduleFetch();
@@ -168,6 +168,13 @@ function* App() {
   ws.onopen = () => {
     connected = true;
     this.refresh();
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((cfg) => {
+        maxSpan = Math.max(MIN_SPAN, cfg.retention_seconds);
+        setView(span, end);
+      })
+      .catch(() => {});
     fetchHistory();
   };
   ws.onmessage = (e) => {
@@ -350,7 +357,7 @@ function* App() {
 
                 {/* ── time range ── */}
                 <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 16px;">
-                  {PRESETS.map(([label, secs]) => (
+                  {PRESETS.filter(([, secs]) => secs <= maxSpan).map(([label, secs]) => (
                     <button
                       key={label}
                       onclick={() => setView(secs, end)}

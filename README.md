@@ -1,6 +1,6 @@
 # Mac Monitor
 
-A lightweight system monitor for macOS servers. Collects CPU, memory, GPU, disk, and network metrics at 5-second intervals, stores them for up to 30 days, and exposes a web UI for both live and historical inspection.
+A lightweight system monitor for macOS servers. Collects CPU, memory, GPU, disk, and network metrics at 5-second intervals, stores them for a configurable period (1 day by default), and exposes a web UI for both live and historical inspection.
 
 ![screenshot](./landing/public/screenshot.png)
 
@@ -15,7 +15,15 @@ make build        # builds web/dist then compiles the binary
 ./mac-monitor     # serves everything on http://localhost:8080
 ```
 
-The binary serves the compiled frontend from `web/dist/` and the database is written to `mac-monitor.db` in the working directory.
+The binary embeds the compiled frontend. The database (`mac-monitor.db`) and settings (`config.json`) live in `~/Library/Application Support/Mac Monitor/`. `config.json` is created on first run:
+
+```json
+{
+  "retention": "1d"
+}
+```
+
+`retention` accepts Go durations (`12h`) or days (`7d`). Restart to apply; old data is pruned and the file compacted at startup.
 
 ## Architecture
 
@@ -28,7 +36,7 @@ The binary serves the compiled frontend from `web/dist/` and the database is wri
                ▼
         ┌─────────────┐
         │  SQLite DB  │  mac-monitor.db
-        └──────┬──────┘  30-day rolling retention
+        └──────┬──────┘  rolling retention (config.json)
                │
                ▼
      ┌──────────────────┐
@@ -49,6 +57,7 @@ The binary serves the compiled frontend from `web/dist/` and the database is wri
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cmd/mac-monitor/`    | Entrypoint. Wires together the collector, storage, and HTTP server.                                                                                                                                    |
 | `internal/collector/` | Metric collection via [gopsutil](https://github.com/shirou/gopsutil). One file per domain: `collector.go` (Snapshot struct + orchestration), `gpu.go` (IOKit via `ioreg`), `disk.go`.                  |
+| `internal/config/`    | Loads `config.json` from the data directory (created with defaults on first run).                                                                                                                       |
 | `internal/storage/`   | SQLite via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure Go, no CGo). Schema migration using `addColumnIfMissing` so new columns can be added without breaking existing databases. |
 | `internal/server/`    | `net/http` server with a WebSocket hub for live metric streaming. Historical data served via `/api/history?from=&to=&step=` (`step` > 1 buckets rows server-side).                                                                                 |
 

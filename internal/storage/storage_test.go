@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -152,6 +154,42 @@ func TestPrune(t *testing.T) {
 	if snaps[0].Timestamp != recentTS {
 		t.Errorf("wrong snapshot survived prune: ts=%d", snaps[0].Timestamp)
 	}
+}
+
+func TestPruneShrinksFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// A fresh database gets converted on the first prune; old ones do too.
+	for i := 0; i < 2; i++ {
+		for ts := int64(1000); ts < 3000; ts++ {
+			s := emptySnap(ts)
+			s.CPUPerCore = make([]float64, 64)
+			if err := db.Insert(s); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := fileSize(t, path)
+		if err := db.Prune(time.Hour); err != nil {
+			t.Fatalf("Prune: %v", err)
+		}
+		if after := fileSize(t, path); after >= before/2 {
+			t.Errorf("round %d: file did not shrink: %d -> %d bytes", i, before, after)
+		}
+	}
+}
+
+func fileSize(t *testing.T, path string) int64 {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Size()
 }
 
 func TestQueryDownsampled(t *testing.T) {

@@ -20,7 +20,7 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 		t.Fatalf("storage.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return New(db, NewHub(), os.DirFS(".")), db
+	return New(db, NewHub(), os.DirFS("."), 24*time.Hour), db
 }
 
 func emptySnap(ts int64) *collector.Snapshot {
@@ -112,5 +112,21 @@ func TestHandleLatest_WithData(t *testing.T) {
 	}
 	if got.MemPercent != 77.0 {
 		t.Errorf("MemPercent: got %v, want 77", got.MemPercent)
+	}
+}
+
+func TestHandleConfig(t *testing.T) {
+	srv, _ := newTestServer(t)
+	w := httptest.NewRecorder()
+	srv.handleConfig(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+
+	var cfg struct {
+		RetentionSeconds int64 `json:"retention_seconds"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if cfg.RetentionSeconds != 86400 {
+		t.Errorf("retention_seconds: got %d, want 86400", cfg.RetentionSeconds)
 	}
 }

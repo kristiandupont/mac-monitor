@@ -8,7 +8,7 @@
 - Static files are served from an `fs.FS` passed at construction time (an embedded FS in production; `os.DirFS` in tests).
 
 **Key Files**:
-- `server.go`: Only file — `Hub`, `Server`, WebSocket handler, history/latest/processes HTTP handlers.
+- `server.go`: Only file — `Hub`, `Server`, WebSocket handler, history/latest/processes/config HTTP handlers. `/api/config` exposes the retention so the UI can bound zooming.
 
 **Notes**:
 - `/api/processes` calls `collector.CollectProcesses()` on each request — no background goroutine; CPU cost is zero when the tab is not open.

@@ -57,13 +57,15 @@ func (h *Hub) Broadcast(s *collector.Snapshot) {
 }
 
 type Server struct {
-	db  *storage.DB
-	hub *Hub
-	mux *http.ServeMux
+	db        *storage.DB
+	hub       *Hub
+	mux       *http.ServeMux
+	retention time.Duration
 }
 
-func New(db *storage.DB, hub *Hub, static fs.FS) *Server {
-	s := &Server{db: db, hub: hub, mux: http.NewServeMux()}
+func New(db *storage.DB, hub *Hub, static fs.FS, retention time.Duration) *Server {
+	s := &Server{db: db, hub: hub, mux: http.NewServeMux(), retention: retention}
+	s.mux.HandleFunc("/api/config", s.handleConfig)
 	s.mux.HandleFunc("/api/live", s.handleLive)
 	s.mux.HandleFunc("/api/history", s.handleHistory)
 	s.mux.HandleFunc("/api/latest", s.handleLatest)
@@ -136,6 +138,13 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(snaps)
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		RetentionSeconds int64 `json:"retention_seconds"`
+	}{RetentionSeconds: int64(s.retention / time.Second)})
 }
 
 func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {

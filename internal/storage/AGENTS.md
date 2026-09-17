@@ -9,6 +9,8 @@
 
 - `QueryDownsampled` groups rows into `ts / step` buckets: counters (net/disk JSON) come from the first row in each bucket, gauges (CPU, memory, load, first GPU) are bucket averages. Empty buckets are omitted so gaps survive.
 
+- `Prune` also returns free pages to the filesystem (`auto_vacuum = INCREMENTAL`). Databases created before this get a one-time full `VACUUM` on their first prune.
+
 **Key Files**:
 - `storage.go`: Only file — `DB` type, `Open`, `Insert`, `Query`, `QueryDownsampled`, `Latest`, `Prune`.
 

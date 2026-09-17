@@ -245,8 +245,40 @@ func (d *DB) Latest() (*collector.Snapshot, error) {
 	return s, nil
 }
 
+// Prune deletes snapshots older than age and returns the freed pages to the
+// filesystem, so shortening the retention actually shrinks the file.
 func (d *DB) Prune(age time.Duration) error {
 	cutoff := time.Now().Add(-age).Unix()
-	_, err := d.db.Exec("DELETE FROM snapshots WHERE ts < ?", cutoff)
-	return err
+	if _, err := d.db.Exec("DELETE FROM snapshots WHERE ts < ?", cutoff); err != nil {
+		return err
+	}
+	return d.reclaim()
+}
+
+const autoVacuumIncremental = 2
+
+func (d *DB) reclaim() error {
+	var mode int
+	if err := d.db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
+		return err
+	}
+	if mode != autoVacuumIncremental {
+		// Databases created before auto_vacuum was enabled need a one-time
+		// full VACUUM for the setting to take effect. Doing it right after a
+		// prune keeps the rewrite as small as possible.
+		if _, err := d.db.Exec("PRAGMA auto_vacuum = INCREMENTAL"); err != nil {
+			return err
+		}
+		_, err := d.db.Exec("VACUUM")
+		return err
+	}
+	// incremental_vacuum frees one page per result row, so drain them all.
+	rows, err := d.db.Query("PRAGMA incremental_vacuum")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+	}
+	return rows.Err()
 }
