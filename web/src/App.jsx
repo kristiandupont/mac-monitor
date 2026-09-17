@@ -7,16 +7,40 @@ import { GpuCard } from "./components/GpuCard.jsx";
 import { DiskCard } from "./components/DiskCard.jsx";
 import { ProcessTable } from "./components/ProcessTable.jsx";
 import {
-  fmtTime,
   fmtBytes,
+  fmtDateTime,
   netRates,
   diskIORates,
   primaryIface,
   primaryDisk,
+  toPoints,
+  gapThreshold,
 } from "./utils.js";
 
-const MAX_HISTORY = 720; // 1 hour at 5s intervals
 const PROCESS_POLL_MS = 5000;
+const COLLECT_INTERVAL = 5; // seconds, matches the Go collector
+const TARGET_POINTS = 800; // per chart; wider spans are downsampled server-side
+const MIN_SPAN = 5 * 60;
+const MAX_SPAN = 31 * 86400;
+const FETCH_DEBOUNCE_MS = 200;
+const PRESETS = [
+  ["15m", 15 * 60],
+  ["1h", 3600],
+  ["6h", 6 * 3600],
+  ["24h", 86400],
+  ["7d", 7 * 86400],
+  ["30d", 30 * 86400],
+];
+
+// Bucket size in seconds for a visible span; 0 means raw samples.
+function stepFor(span) {
+  const step = Math.ceil(span / TARGET_POINTS);
+  return step <= COLLECT_INTERVAL ? 0 : step;
+}
+
+function pillStyle(active) {
+  return `padding: 4px 12px; border-radius: 20px; border: 1px solid ${active ? "#58a6ff" : "#30363d"}; background: ${active ? "#1c2d3f" : "transparent"}; color: ${active ? "#58a6ff" : "#8b949e"}; font-size: 12px; cursor: pointer;`;
+}
 
 // ── sections ─────────────────────────────────────────────────────────────────
 
@@ -35,7 +59,14 @@ function ChartSection({ title, children }) {
 
 function* App() {
   let snap = null;
-  let history = [];
+  let history = []; // snapshots covering `loaded`
+  // Visible window: `span` seconds ending at `end`, or at now when end is null (live).
+  let span = 3600;
+  let end = null;
+  // What `history` currently holds.
+  let loaded = { from: 0, to: 0, step: 0, fetchedAt: 0 };
+  let fetchSeq = 0;
+  let fetchTimer = null;
   let connected = false;
   let error = null;
   let tab = "overview"; // "overview" | "processes"
@@ -79,20 +110,81 @@ function* App() {
     this.refresh();
   };
 
-  ws.onopen = () => {
-    connected = true;
-    this.refresh();
-    fetch("/api/history")
+  const nowSec = () => Date.now() / 1000;
+  const viewRange = () => {
+    const to = end ?? nowSec();
+    return [to - span, to];
+  };
+
+  // Fetches the visible range plus half a span on each side, so small pans
+  // don't show empty space while the next request is in flight.
+  const fetchHistory = () => {
+    clearTimeout(fetchTimer);
+    const [from, to] = viewRange();
+    const step = stepFor(span);
+    const pad = span / 2;
+    const req = {
+      from: Math.floor(from - pad),
+      to: Math.ceil(Math.min(to + pad, nowSec())),
+      step,
+    };
+    const seq = ++fetchSeq;
+    fetch(`/api/history?from=${req.from}&to=${req.to}&step=${step}`)
       .then((r) => r.json())
       .then((data) => {
+        if (seq !== fetchSeq) return;
         history = data ?? [];
+        loaded = { ...req, fetchedAt: nowSec() };
         this.refresh();
       })
       .catch(() => {});
   };
+
+  const scheduleFetch = () => {
+    clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(fetchHistory, FETCH_DEBOUNCE_MS);
+  };
+
+  const setView = (newSpan, newEnd) => {
+    span = Math.min(MAX_SPAN, Math.max(MIN_SPAN, newSpan));
+    const now = nowSec();
+    end = newEnd == null || newEnd >= now ? null : Math.max(newEnd, now - MAX_SPAN + span);
+    const [from, to] = viewRange();
+    const covered = from >= loaded.from && (end === null || to <= loaded.to);
+    if (stepFor(span) !== loaded.step || !covered) scheduleFetch();
+    this.refresh();
+  };
+
+  const view = () => {
+    const [from, to] = viewRange();
+    return {
+      xMin: from * 1000,
+      xMax: to * 1000,
+      onView: (min, max) => setView((max - min) / 1000, max / 1000),
+      onReset: () => setView(span, null),
+    };
+  };
+
+  ws.onopen = () => {
+    connected = true;
+    this.refresh();
+    fetchHistory();
+  };
   ws.onmessage = (e) => {
     snap = JSON.parse(e.data);
-    history = [...history, snap].slice(-MAX_HISTORY);
+    if (end === null) {
+      if (loaded.step === 0) {
+        // Raw resolution: append live samples and drop ones that scrolled out.
+        const keepFrom = snap.ts - span * 1.5;
+        if (!history.length || snap.ts > history[history.length - 1].ts) {
+          history = [...history, snap].filter((s) => s.ts >= keepFrom);
+        }
+        loaded = { ...loaded, from: Math.max(loaded.from, keepFrom), to: snap.ts };
+      } else if (snap.ts - loaded.fetchedAt >= loaded.step) {
+        // Downsampled: refetch once a new bucket's worth of data exists.
+        fetchHistory();
+      }
+    }
     this.refresh();
   };
   ws.onerror = () => {
@@ -108,22 +200,24 @@ function* App() {
     while (true) {
       const iface = primaryIface(snap);
       const disk = primaryDisk(snap);
-      const rateLabels = history.slice(1).map((s) => fmtTime(s.ts));
+      const maxGap = gapThreshold(loaded.step);
+      const ts = history.map((s) => s.ts);
+      const rateTs = ts.slice(1);
+      const chartView = view();
+      const [viewFrom, viewTo] = viewRange();
 
       let netDatasets = null;
       if (iface && history.length > 1) {
-        const rates = netRates(history, iface);
+        const rates = netRates(history, iface, maxGap);
         netDatasets = [
           {
-            labels: rateLabels,
-            data: rates.map((r) => r.in),
+            data: toPoints(rateTs, rates.map((r) => r.in), maxGap),
             color: "#58a6ff",
             label: "IN",
             fill: false,
           },
           {
-            labels: rateLabels,
-            data: rates.map((r) => r.out),
+            data: toPoints(rateTs, rates.map((r) => r.out), maxGap),
             color: "#3fb950",
             label: "OUT",
             fill: false,
@@ -133,18 +227,16 @@ function* App() {
 
       let diskIODatasets = null;
       if (disk && history.length > 1) {
-        const rates = diskIORates(history, disk);
+        const rates = diskIORates(history, disk, maxGap);
         diskIODatasets = [
           {
-            labels: rateLabels,
-            data: rates.map((r) => r.read),
+            data: toPoints(rateTs, rates.map((r) => r.read), maxGap),
             color: "#d29922",
             label: "Read",
             fill: false,
           },
           {
-            labels: rateLabels,
-            data: rates.map((r) => r.write),
+            data: toPoints(rateTs, rates.map((r) => r.write), maxGap),
             color: "#f85149",
             label: "Write",
             fill: false,
@@ -154,27 +246,23 @@ function* App() {
 
       let gpuDatasets = null;
       if (snap?.gpu_stats?.length) {
-        const labels = history.map((s) => fmtTime(s.ts));
+        const gpu = (key) =>
+          toPoints(ts, history.map((s) => s.gpu_stats?.[0]?.[key] ?? 0), maxGap);
         gpuDatasets = [
           {
-            labels,
-            data: history.map((s) => s.gpu_stats?.[0]?.device_utilization ?? 0),
+            data: gpu("device_utilization"),
             color: "#bc8cff",
             label: "Device",
             fill: true,
           },
           {
-            labels,
-            data: history.map(
-              (s) => s.gpu_stats?.[0]?.renderer_utilization ?? 0,
-            ),
+            data: gpu("renderer_utilization"),
             color: "#d2a8ff",
             label: "Renderer",
             fill: false,
           },
           {
-            labels,
-            data: history.map((s) => s.gpu_stats?.[0]?.tiler_utilization ?? 0),
+            data: gpu("tiler_utilization"),
             color: "#a5d6ff",
             label: "Tiler",
             fill: false,
@@ -260,15 +348,41 @@ function* App() {
                   <DiskCard diskStats={snap.disk_stats} />
                 </section>
 
+                {/* ── time range ── */}
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 16px;">
+                  {PRESETS.map(([label, secs]) => (
+                    <button
+                      key={label}
+                      onclick={() => setView(secs, end)}
+                      style={pillStyle(span === secs)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <button
+                    onclick={() => setView(span, null)}
+                    style={pillStyle(end === null)}
+                  >
+                    ● Live
+                  </button>
+                  <span style="font-size: 11px; color: #8b949e; margin-left: 8px;">
+                    {fmtDateTime(viewFrom * 1000)} – {fmtDateTime(viewTo * 1000)}
+                  </span>
+                  <span style="font-size: 11px; color: #6e7681; margin-left: auto;">
+                    pinch or ⌘-scroll to zoom · drag to pan · double-click for live
+                  </span>
+                </div>
+
                 {/* ── charts ── */}
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px;">
-                  <ChartSection title="CPU History (last hour)">
-                    <CpuChart history={history} />
+                  <ChartSection title="CPU History">
+                    <CpuChart history={history} maxGap={maxGap} view={chartView} />
                   </ChartSection>
 
                   {gpuDatasets && (
-                    <ChartSection title="GPU History (last hour)">
+                    <ChartSection title="GPU History">
                       <LineChart
+                        {...chartView}
                         datasets={gpuDatasets}
                         yMax={100}
                         formatY={(v) => `${v.toFixed(0)}%`}
@@ -279,13 +393,13 @@ function* App() {
 
                 {netDatasets && (
                   <ChartSection title={`Network — ${iface}`}>
-                    <LineChart datasets={netDatasets} formatY={fmtBytes} />
+                    <LineChart {...chartView} datasets={netDatasets} formatY={fmtBytes} />
                   </ChartSection>
                 )}
 
                 {diskIODatasets && (
                   <ChartSection title={`Disk I/O — ${disk}`}>
-                    <LineChart datasets={diskIODatasets} formatY={fmtBytes} />
+                    <LineChart {...chartView} datasets={diskIODatasets} formatY={fmtBytes} />
                   </ChartSection>
                 )}
               </div>
@@ -303,6 +417,7 @@ function* App() {
       );
     }
   } finally {
+    clearTimeout(fetchTimer);
     stopProcPolling();
     ws.close();
   }

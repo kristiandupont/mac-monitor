@@ -123,7 +123,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		from = to - 3600
 	}
 
-	snaps, err := s.db.Query(from, to)
+	// step > 1 downsamples to one averaged snapshot per step seconds.
+	step, _ := strconv.ParseInt(q.Get("step"), 10, 64)
+
+	snaps, err := s.db.QueryDownsampled(from, to, step)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

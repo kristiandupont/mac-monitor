@@ -153,3 +153,45 @@ func TestPrune(t *testing.T) {
 		t.Errorf("wrong snapshot survived prune: ts=%d", snaps[0].Timestamp)
 	}
 }
+
+func TestQueryDownsampled(t *testing.T) {
+	db := newTestDB(t)
+
+	// Two samples in bucket [100,110), one in [110,120), none in [120,130),
+	// one in [130,140).
+	for _, v := range []struct {
+		ts  int64
+		cpu float64
+		gpu float64
+		rx  uint64
+	}{{100, 10, 20, 1000}, {105, 30, 40, 2000}, {110, 50, 60, 3000}, {130, 70, 80, 4000}} {
+		s := emptySnap(v.ts)
+		s.CPUPercent = v.cpu
+		s.GPUStats = []collector.GPUStat{{DeviceUtilization: v.gpu}}
+		s.NetStats = []collector.NetStat{{Name: "en0", BytesRecv: v.rx}}
+		if err := db.Insert(s); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+	}
+
+	snaps, err := db.QueryDownsampled(100, 140, 10)
+	if err != nil {
+		t.Fatalf("QueryDownsampled: %v", err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("expected 3 buckets, got %d", len(snaps))
+	}
+	want := []struct {
+		ts  int64
+		cpu float64
+		gpu float64
+		rx  uint64
+	}{{100, 20, 30, 1000}, {110, 50, 60, 3000}, {130, 70, 80, 4000}}
+	for i, w := range want {
+		s := snaps[i]
+		if s.Timestamp != w.ts || s.CPUPercent != w.cpu || s.GPUStats[0].DeviceUtilization != w.gpu || s.NetStats[0].BytesRecv != w.rx {
+			t.Errorf("bucket %d: got ts=%d cpu=%v gpu=%v rx=%d, want %+v",
+				i, s.Timestamp, s.CPUPercent, s.GPUStats[0].DeviceUtilization, s.NetStats[0].BytesRecv, w)
+		}
+	}
+}

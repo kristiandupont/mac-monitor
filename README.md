@@ -50,7 +50,7 @@ The binary serves the compiled frontend from `web/dist/` and the database is wri
 | `cmd/mac-monitor/`    | Entrypoint. Wires together the collector, storage, and HTTP server.                                                                                                                                    |
 | `internal/collector/` | Metric collection via [gopsutil](https://github.com/shirou/gopsutil). One file per domain: `collector.go` (Snapshot struct + orchestration), `gpu.go` (IOKit via `ioreg`), `disk.go`.                  |
 | `internal/storage/`   | SQLite via [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure Go, no CGo). Schema migration using `addColumnIfMissing` so new columns can be added without breaking existing databases. |
-| `internal/server/`    | `net/http` server with a WebSocket hub for live metric streaming. Historical data served via `/api/history?from=&to=`.                                                                                 |
+| `internal/server/`    | `net/http` server with a WebSocket hub for live metric streaming. Historical data served via `/api/history?from=&to=&step=` (`step` > 1 buckets rows server-side).                                                                                 |
 
 ### Frontend
 
@@ -58,8 +58,8 @@ Built with [Vite](https://vitejs.dev/) and [CrankJS](https://crank.js.org/). Cra
 
 | File                                 | Responsibility                                                                         |
 | ------------------------------------ | -------------------------------------------------------------------------------------- |
-| `web/src/App.jsx`                    | Root component. Owns the WebSocket connection, history buffer, and top-level layout.   |
-| `web/src/components/LineChart.jsx`   | Generic reusable Chart.js line chart. Accepts `datasets`, `yMax`, and `formatY` props. |
+| `web/src/App.jsx`                    | Root component. Owns the WebSocket connection, visible time range, history fetching, and top-level layout.   |
+| `web/src/components/LineChart.jsx`   | Chart.js line chart on a linear time axis. Accepts `datasets`, `xMin`/`xMax`, `onView`, `yMax`, and `formatY` props; handles zoom and pan. |
 | `web/src/components/MetricGauge.jsx` | Horizontal progress bar for a single metric (works with both percentages and bytes).   |
 | `web/src/components/GpuCard.jsx`     | GPU utilization and memory (parsed from `ioreg -rc IOAccelerator`).                    |
 | `web/src/components/DiskCard.jsx`    | Disk space per user-facing volume (filters out internal APFS system volumes).          |
@@ -68,7 +68,7 @@ Built with [Vite](https://vitejs.dev/) and [CrankJS](https://crank.js.org/). Cra
 
 1. A ticker goroutine calls `collector.Collect()` every 5 seconds, which gathers all metrics into a `Snapshot` struct.
 2. The snapshot is written to SQLite and broadcast to all connected WebSocket clients.
-3. The frontend seeds the history chart from `GET /api/history` on connect, then appends live snapshots from the WebSocket feed. Network and disk I/O rates are computed client-side as deltas between consecutive snapshots.
+3. The frontend fetches the visible time range from `GET /api/history`. Short ranges use raw samples and append live snapshots from the WebSocket feed; longer ranges pass `step` so the server returns one averaged snapshot per bucket. Charts plot real timestamps and break the line where samples are missing. Network and disk I/O rates are computed client-side as deltas between consecutive snapshots.
 
 ### Adding a new metric
 

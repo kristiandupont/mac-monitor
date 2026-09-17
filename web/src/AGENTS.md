@@ -8,7 +8,7 @@
 - `App.jsx` owns the WebSocket lifecycle and history buffer. Pure data helpers (rate calculations, formatting, interface selection) live in `utils.js`.
 
 **Key Files**:
-- `App.jsx`: Root component — WS setup, history ring buffer, layout.
+- `App.jsx`: Root component — WS setup, visible time range (`span` + `end`, `end === null` means live), debounced history fetching, layout.
 - `utils.js`: Pure data-transform and formatting helpers; all unit-tested.
 - `main.jsx`: Entry point — mounts `App` into the DOM.
 
