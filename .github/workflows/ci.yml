@@ -8,13 +8,14 @@ on:
 jobs:
   test-go:
     name: Go tests
-    runs-on: ubuntu-latest
+    # The collector reads IOKit/libproc via cgo, so tests need macOS.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test ./internal/storage/... ./internal/server/... ./internal/collector/...
+      - run: go test ./internal/storage/... ./internal/server/... ./internal/collector/... ./internal/config/... ./internal/alerts/...
 
   test-web:
     name: Web tests

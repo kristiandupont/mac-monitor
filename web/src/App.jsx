@@ -6,6 +6,7 @@ import { CpuChart } from "./components/CpuChart.jsx";
 import { GpuCard } from "./components/GpuCard.jsx";
 import { DiskCard } from "./components/DiskCard.jsx";
 import { ProcessTable } from "./components/ProcessTable.jsx";
+import { AlertsPanel } from "./components/AlertsPanel.jsx";
 import {
   fmtBytes,
   fmtDateTime,
@@ -18,6 +19,7 @@ import {
 } from "./utils.js";
 
 const PROCESS_POLL_MS = 5000;
+const ALERTS_POLL_MS = 10000;
 const COLLECT_INTERVAL = 5; // seconds, matches the Go collector
 const TARGET_POINTS = 800; // per chart; wider spans are downsampled server-side
 const MIN_SPAN = 5 * 60;
@@ -69,10 +71,12 @@ function* App() {
   let maxSpan = 86400; // replaced by the server's retention from /api/config
   let connected = false;
   let error = null;
-  let tab = "overview"; // "overview" | "processes"
+  let tab = "overview"; // "overview" | "processes" | "alerts"
   let processes = null;
   let cpuReady = false;
-  let procTimer = null;
+  let alertStatus = null;
+  let alertError = null;
+  let pollTimer = null;
 
   const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${wsProto}//${window.location.host}/api/live`);
@@ -88,24 +92,58 @@ function* App() {
       .catch(() => {});
   };
 
-  const startProcPolling = () => {
-    if (procTimer !== null) return;
-    fetchProcesses();
-    procTimer = setInterval(fetchProcesses, PROCESS_POLL_MS);
+  const fetchAlerts = () => {
+    fetch("/api/alerts")
+      .then((r) => r.json())
+      .then((data) => {
+        alertStatus = data;
+        this.refresh();
+      })
+      .catch(() => {});
   };
 
-  const stopProcPolling = () => {
-    if (procTimer === null) return;
-    clearInterval(procTimer);
-    procTimer = null;
+  const changeIgnore = (method, process) => {
+    const req =
+      method === "POST"
+        ? {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ process }),
+          }
+        : { method };
+    const url =
+      method === "POST"
+        ? "/api/alerts/ignore"
+        : `/api/alerts/ignore?process=${encodeURIComponent(process)}`;
+    fetch(url, req)
+      .then(async (r) => {
+        alertError = r.ok ? null : await r.text();
+        fetchAlerts();
+      })
+      .catch((e) => {
+        alertError = String(e);
+        this.refresh();
+      });
+  };
+
+  // Only the visible tab's data is polled.
+  const POLLERS = {
+    processes: [fetchProcesses, PROCESS_POLL_MS],
+    alerts: [fetchAlerts, ALERTS_POLL_MS],
+  };
+
+  const stopPolling = () => {
+    clearInterval(pollTimer);
+    pollTimer = null;
   };
 
   const switchTab = (t) => {
     tab = t;
-    if (t === "processes") {
-      startProcPolling();
-    } else {
-      stopProcPolling();
+    stopPolling();
+    if (POLLERS[t]) {
+      const [poll, ms] = POLLERS[t];
+      poll();
+      pollTimer = setInterval(poll, ms);
     }
     this.refresh();
   };
@@ -292,7 +330,7 @@ function* App() {
 
           {/* ── tabs ── */}
           <nav style="display: flex; gap: 4px; margin-bottom: 28px;">
-            {["overview", "processes"].map((t) => (
+            {["overview", "processes", "alerts"].map((t) => (
               <button
                 key={t}
                 onclick={() => switchTab(t)}
@@ -410,9 +448,18 @@ function* App() {
                   </ChartSection>
                 )}
               </div>
-            ) : (
+            ) : tab === "processes" ? (
               <section style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
                 <ProcessTable processes={processes} cpuReady={cpuReady} />
+              </section>
+            ) : (
+              <section style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
+                <AlertsPanel
+                  status={alertStatus}
+                  error={alertError}
+                  onIgnore={(p) => changeIgnore("POST", p)}
+                  onUnignore={(p) => changeIgnore("DELETE", p)}
+                />
               </section>
             )
           ) : (
@@ -425,7 +472,7 @@ function* App() {
     }
   } finally {
     clearTimeout(fetchTimer);
-    stopProcPolling();
+    stopPolling();
     ws.close();
   }
 }

@@ -1,11 +1,80 @@
 package collector
 
-import (
-	"context"
-	"os/exec"
-	"time"
+/*
+#cgo LDFLAGS: -framework IOKit -framework CoreFoundation
+#include <IOKit/IOKitLib.h>
+#include <CoreFoundation/CoreFoundation.h>
 
-	"howett.net/plist"
+typedef struct {
+	char     model[128];
+	uint64_t cores;
+	double   device, tiler, renderer;
+	uint64_t in_use, alloc;
+} mm_gpu_stat;
+
+static double mm_num(CFDictionaryRef d, const char *key) {
+	CFStringRef k = CFStringCreateWithCString(NULL, key, kCFStringEncodingUTF8);
+	CFTypeRef v = CFDictionaryGetValue(d, k);
+	CFRelease(k);
+	double out = 0;
+	if (v && CFGetTypeID(v) == CFNumberGetTypeID()) {
+		CFNumberGetValue((CFNumberRef)v, kCFNumberDoubleType, &out);
+	}
+	return out;
+}
+
+static CFTypeRef mm_prop(io_registry_entry_t e, const char *key) {
+	CFStringRef k = CFStringCreateWithCString(NULL, key, kCFStringEncodingUTF8);
+	CFTypeRef v = IORegistryEntryCreateCFProperty(e, k, kCFAllocatorDefault, 0);
+	CFRelease(k);
+	return v;
+}
+
+// Reads IOAccelerator performance statistics straight from the IORegistry,
+// which is what `ioreg -rc IOAccelerator` prints, without spawning a process.
+static int mm_gpu_stats(mm_gpu_stat *out, int max) {
+	io_iterator_t iter;
+	if (IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iter) != KERN_SUCCESS) {
+		return -1;
+	}
+	int n = 0;
+	io_registry_entry_t e;
+	while ((e = IOIteratorNext(iter)) && n < max) {
+		CFTypeRef perf = mm_prop(e, "PerformanceStatistics");
+		if (perf && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
+			mm_gpu_stat *s = &out[n++];
+			memset(s, 0, sizeof(*s));
+			CFDictionaryRef d = (CFDictionaryRef)perf;
+			s->device   = mm_num(d, "Device Utilization %");
+			s->tiler    = mm_num(d, "Tiler Utilization %");
+			s->renderer = mm_num(d, "Renderer Utilization %");
+			s->in_use   = (uint64_t)mm_num(d, "In use system memory");
+			s->alloc    = (uint64_t)mm_num(d, "Alloc system memory");
+
+			CFTypeRef model = mm_prop(e, "model");
+			if (model && CFGetTypeID(model) == CFStringGetTypeID()) {
+				CFStringGetCString((CFStringRef)model, s->model, sizeof(s->model), kCFStringEncodingUTF8);
+			}
+			if (model) CFRelease(model);
+
+			CFTypeRef cores = mm_prop(e, "gpu-core-count");
+			if (cores && CFGetTypeID(cores) == CFNumberGetTypeID()) {
+				CFNumberGetValue((CFNumberRef)cores, kCFNumberSInt64Type, &s->cores);
+			}
+			if (cores) CFRelease(cores);
+		}
+		if (perf) CFRelease(perf);
+		IOObjectRelease(e);
+	}
+	IOObjectRelease(iter);
+	return n;
+}
+*/
+import "C"
+
+import (
+	"errors"
+	"unsafe"
 )
 
 type GPUStat struct {
@@ -18,72 +87,25 @@ type GPUStat struct {
 	MemAllocated        uint64  `json:"mem_allocated"`
 }
 
+const maxGPUs = 8
+
 func collectGPU() ([]GPUStat, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, "ioreg", "-rc", "IOAccelerator", "-a").Output()
-	if err != nil {
-		return nil, err
+	var buf [maxGPUs]C.mm_gpu_stat
+	n := int(C.mm_gpu_stats(&buf[0], maxGPUs))
+	if n < 0 {
+		return nil, errors.New("IOAccelerator lookup failed")
 	}
-
-	var entries []map[string]interface{}
-	if _, err := plist.Unmarshal(out, &entries); err != nil {
-		return nil, err
-	}
-
 	var stats []GPUStat
-	for _, e := range entries {
-		perfRaw, ok := e["PerformanceStatistics"]
-		if !ok {
-			continue
-		}
-		perf, ok := perfRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		stat := GPUStat{
-			Name:                plistString(e, "model"),
-			CoreCount:           plistUint64(e, "gpu-core-count"),
-			DeviceUtilization:   plistFloat(perf, "Device Utilization %"),
-			TilerUtilization:    plistFloat(perf, "Tiler Utilization %"),
-			RendererUtilization: plistFloat(perf, "Renderer Utilization %"),
-			MemInUse:            plistUint64(perf, "In use system memory"),
-			MemAllocated:        plistUint64(perf, "Alloc system memory"),
-		}
-		stats = append(stats, stat)
+	for _, s := range buf[:n] {
+		stats = append(stats, GPUStat{
+			Name:                C.GoString((*C.char)(unsafe.Pointer(&s.model[0]))),
+			CoreCount:           uint64(s.cores),
+			DeviceUtilization:   float64(s.device),
+			TilerUtilization:    float64(s.tiler),
+			RendererUtilization: float64(s.renderer),
+			MemInUse:            uint64(s.in_use),
+			MemAllocated:        uint64(s.alloc),
+		})
 	}
 	return stats, nil
-}
-
-func plistString(m map[string]interface{}, key string) string {
-	v, _ := m[key].(string)
-	return v
-}
-
-func plistFloat(m map[string]interface{}, key string) float64 {
-	switch v := m[key].(type) {
-	case uint64:
-		return float64(v)
-	case int64:
-		return float64(v)
-	case float64:
-		return v
-	}
-	return 0
-}
-
-func plistUint64(m map[string]interface{}, key string) uint64 {
-	switch v := m[key].(type) {
-	case uint64:
-		return v
-	case int64:
-		if v > 0 {
-			return uint64(v)
-		}
-	case float64:
-		return uint64(v)
-	}
-	return 0
 }

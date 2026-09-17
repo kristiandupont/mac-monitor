@@ -93,15 +93,7 @@ func Collect() (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range counters {
-		snap.NetStats = append(snap.NetStats, NetStat{
-			Name:        c.Name,
-			BytesSent:   c.BytesSent,
-			BytesRecv:   c.BytesRecv,
-			PacketsSent: c.PacketsSent,
-			PacketsRecv: c.PacketsRecv,
-		})
-	}
+	snap.NetStats = netStatsFrom(counters)
 
 	gpuStats, err := collectGPU()
 	if err != nil {
@@ -118,4 +110,23 @@ func Collect() (*Snapshot, error) {
 	snap.DiskIOStats = diskIOStats
 
 	return snap, nil
+}
+
+// netStatsFrom drops interfaces that have never carried traffic. macOS lists
+// many idle virtual interfaces, and storing them made up most of each row.
+func netStatsFrom(counters []net.IOCountersStat) []NetStat {
+	stats := []NetStat{}
+	for _, c := range counters {
+		if c.BytesSent == 0 && c.BytesRecv == 0 {
+			continue
+		}
+		stats = append(stats, NetStat{
+			Name:        c.Name,
+			BytesSent:   c.BytesSent,
+			BytesRecv:   c.BytesRecv,
+			PacketsSent: c.PacketsSent,
+			PacketsRecv: c.PacketsRecv,
+		})
+	}
+	return stats
 }

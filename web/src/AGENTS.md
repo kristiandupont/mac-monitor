@@ -13,6 +13,6 @@
 - `main.jsx`: Entry point — mounts `App` into the DOM.
 
 **Notes**:
-- Tab state (`overview` / `processes`) lives in `App.jsx`. The process poller (`setInterval` on `/api/processes`) starts only when the processes tab is active and is cleared on tab switch or unmount.
+- Tab state (`overview` / `processes` / `alerts`) lives in `App.jsx`. Only the visible tab is polled (`POLLERS`: `/api/processes` every 5 s, `/api/alerts` every 10 s); the timer is cleared on tab switch or unmount.
 
-**Relationships**: Pulls data from Go server at `/api/live` (WS), `/api/history` (HTTP), and `/api/processes` (HTTP, polled every 5 s only while processes tab is active). Components in `./components/`.
+**Relationships**: Pulls data from Go server at `/api/live` (WS), `/api/history` (HTTP), and `/api/processes` and `/api/alerts` (HTTP, polled only while their tab is active). Components in `./components/`.

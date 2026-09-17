@@ -7,9 +7,11 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"mac-monitor/internal/alerts"
 	"mac-monitor/internal/collector"
 	"mac-monitor/internal/storage"
 
@@ -56,16 +58,27 @@ func (h *Hub) Broadcast(s *collector.Snapshot) {
 	}
 }
 
+// AlertService is the part of *alerts.Engine the API exposes.
+type AlertService interface {
+	Status() (alerts.Status, error)
+	Ignore(process string) error
+	Unignore(process string) error
+}
+
 type Server struct {
 	db        *storage.DB
 	hub       *Hub
 	mux       *http.ServeMux
 	retention time.Duration
+	alerts    AlertService
 }
 
-func New(db *storage.DB, hub *Hub, static fs.FS, retention time.Duration) *Server {
-	s := &Server{db: db, hub: hub, mux: http.NewServeMux(), retention: retention}
+func New(db *storage.DB, hub *Hub, static fs.FS, retention time.Duration, alerts AlertService) *Server {
+	s := &Server{db: db, hub: hub, mux: http.NewServeMux(), retention: retention, alerts: alerts}
 	s.mux.HandleFunc("/api/config", s.handleConfig)
+	s.mux.HandleFunc("GET /api/alerts", s.handleAlerts)
+	s.mux.HandleFunc("POST /api/alerts/ignore", s.handleIgnore)
+	s.mux.HandleFunc("DELETE /api/alerts/ignore", s.handleUnignore)
 	s.mux.HandleFunc("/api/live", s.handleLive)
 	s.mux.HandleFunc("/api/history", s.handleHistory)
 	s.mux.HandleFunc("/api/latest", s.handleLatest)
@@ -145,6 +158,51 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(struct {
 		RetentionSeconds int64 `json:"retention_seconds"`
 	}{RetentionSeconds: int64(s.retention / time.Second)})
+}
+
+func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
+	st, err := s.alerts.Status()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(st)
+}
+
+// handleIgnore takes {"process": "name"}. Requiring a JSON content type means
+// browsers preflight cross-origin requests (which we don't allow), so other
+// web pages can't silently change the ignore list.
+func (s *Server) handleIgnore(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		http.Error(w, "expected application/json", http.StatusUnsupportedMediaType)
+		return
+	}
+	var body struct {
+		Process string `json:"process"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Process) == "" {
+		http.Error(w, "expected {\"process\": \"name\"}", http.StatusBadRequest)
+		return
+	}
+	if err := s.alerts.Ignore(body.Process); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleUnignore(w http.ResponseWriter, r *http.Request) {
+	process := r.URL.Query().Get("process")
+	if process == "" {
+		http.Error(w, "missing process", http.StatusBadRequest)
+		return
+	}
+	if err := s.alerts.Unignore(process); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {

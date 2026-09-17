@@ -7,7 +7,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
-	howett.net/plist v1.0.1
+	golang.org/x/sys v0.22.0
 	modernc.org/sqlite v1.29.1
 )
 
@@ -27,7 +27,6 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/image v0.14.0 // indirect
 	golang.org/x/net v0.0.0-20211118161319-6a13c67c3ce4 // indirect
-	golang.org/x/sys v0.22.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
 	modernc.org/libc v1.55.3 // indirect

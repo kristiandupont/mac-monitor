@@ -11,7 +11,10 @@
 
 - `Prune` also returns free pages to the filesystem (`auto_vacuum = INCREMENTAL`). Databases created before this get a one-time full `VACUUM` on their first prune.
 
+- `alerts` holds one row per alert key (level 0 = resolved); `notifications` is the delivery queue. `SaveAlert` writes an alert and its queued notifications in one transaction. `Prune` also drops resolved alerts and finished notifications older than the retention.
+
 **Key Files**:
-- `storage.go`: Only file — `DB` type, `Open`, `Insert`, `Query`, `QueryDownsampled`, `Latest`, `Prune`.
+- `alerts.go`: `Alert`/`Notification` types and their queries.
+- `storage.go`: `DB` type, `Open`, `Insert`, `Query`, `QueryDownsampled`, `Latest`, `Prune`.
 
 **Relationships**: Depends on `internal/collector.Snapshot` as the data model. Used by `internal/server` and `cmd/mac-monitor`.

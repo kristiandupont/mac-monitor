@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"mac-monitor/internal/alerts"
 	"mac-monitor/internal/collector"
 	"mac-monitor/internal/storage"
 )
@@ -20,7 +23,7 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 		t.Fatalf("storage.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	return New(db, NewHub(), os.DirFS("."), 24*time.Hour), db
+	return New(db, NewHub(), os.DirFS("."), 24*time.Hour, &fakeAlerts{}), db
 }
 
 func emptySnap(ts int64) *collector.Snapshot {
@@ -128,5 +131,48 @@ func TestHandleConfig(t *testing.T) {
 	}
 	if cfg.RetentionSeconds != 86400 {
 		t.Errorf("retention_seconds: got %d, want 86400", cfg.RetentionSeconds)
+	}
+}
+
+type fakeAlerts struct {
+	ignored []string
+}
+
+func (f *fakeAlerts) Status() (alerts.Status, error) {
+	return alerts.Status{Rules: alerts.Rules{CPUIgnore: f.ignored}}, nil
+}
+func (f *fakeAlerts) Ignore(p string) error { f.ignored = append(f.ignored, p); return nil }
+func (f *fakeAlerts) Unignore(p string) error {
+	f.ignored = slices.DeleteFunc(f.ignored, func(s string) bool { return s == p })
+	return nil
+}
+
+func TestIgnoreEndpoints(t *testing.T) {
+	srv, _ := newTestServer(t)
+	fake := srv.alerts.(*fakeAlerts)
+	do := func(method, url, contentType, body string) int {
+		req := httptest.NewRequest(method, url, strings.NewReader(body))
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	if code := do("POST", "/api/alerts/ignore", "text/plain", `{"process":"x"}`); code != http.StatusUnsupportedMediaType {
+		t.Errorf("non-JSON POST: got %d", code)
+	}
+	if code := do("POST", "/api/alerts/ignore", "application/json", `{"process":" "}`); code != http.StatusBadRequest {
+		t.Errorf("blank process: got %d", code)
+	}
+	if code := do("POST", "/api/alerts/ignore", "application/json", `{"process":"ffmpeg"}`); code != http.StatusNoContent {
+		t.Errorf("ignore: got %d", code)
+	}
+	if code := do("GET", "/api/alerts", "", ""); code != http.StatusOK || !slices.Equal(fake.ignored, []string{"ffmpeg"}) {
+		t.Errorf("status: got %d, ignored %v", code, fake.ignored)
+	}
+	if code := do("DELETE", "/api/alerts/ignore?process=ffmpeg", "", ""); code != http.StatusNoContent || len(fake.ignored) != 0 {
+		t.Errorf("unignore: got %d, ignored %v", code, fake.ignored)
 	}
 }

@@ -34,6 +34,10 @@ func isUserFacingMount(mp string) bool {
 	if strings.HasPrefix(mp, "/private/var/") {
 		return false
 	}
+	// The recovery volume is sometimes mounted; it shares /'s container.
+	if mp == "/Volumes/Recovery" {
+		return false
+	}
 	return true
 }
 

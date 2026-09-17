@@ -10,6 +10,7 @@
 - `LineChart.jsx`: Reusable multi-dataset line chart via Chart.js.
 - `MetricGauge.jsx`: Single-value progress bar with label and formatted value.
 - `CpuChart.jsx`, `GpuCard.jsx`, `DiskCard.jsx`, `LoadAvg.jsx`: Domain-specific panels.
+- `AlertsPanel.jsx`: Alerts tab; stateless, ignore-list changes go through `onIgnore`/`onUnignore` callbacks.
 - `ProcessTable.jsx`: Sortable process list (by CPU desc); stateless — receives `processes` array from `App.jsx`.
 
 **Relationships**: All data flows down from `../App.jsx`. No inter-component dependencies.

@@ -66,7 +66,7 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	return migrateAlerts(db)
 }
 
 func addColumnIfMissing(db *sql.DB, table, column, definition string) error {
@@ -250,6 +250,9 @@ func (d *DB) Latest() (*collector.Snapshot, error) {
 func (d *DB) Prune(age time.Duration) error {
 	cutoff := time.Now().Add(-age).Unix()
 	if _, err := d.db.Exec("DELETE FROM snapshots WHERE ts < ?", cutoff); err != nil {
+		return err
+	}
+	if err := pruneAlerts(d.db, time.Unix(cutoff, 0)); err != nil {
 		return err
 	}
 	return d.reclaim()

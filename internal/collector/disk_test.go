@@ -15,6 +15,7 @@ func TestIsUserFacingMount(t *testing.T) {
 		{"/System/Volumes/Preboot", false},
 		{"/private/var/folders/abc", false},
 		{"/private/var/vm", false},
+		{"/Volumes/Recovery", false},
 	}
 	for _, c := range cases {
 		got := isUserFacingMount(c.mp)

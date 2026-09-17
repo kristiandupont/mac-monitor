@@ -13,4 +13,6 @@
 **Notes**:
 - `/api/processes` calls `collector.CollectProcesses()` on each request — no background goroutine; CPU cost is zero when the tab is not open.
 
+- `/api/alerts` (GET status, POST/DELETE `/api/alerts/ignore`) goes through the `AlertService` interface. The POST requires `Content-Type: application/json` so cross-origin pages can't change it without a (refused) preflight. Alert status never includes the shell command, since it may hold secrets and the server listens on all interfaces.
+
 **Relationships**: Depends on `internal/storage` for history queries and `internal/collector.Snapshot` as the broadcast payload. `/api/processes` calls `collector.CollectProcesses()` directly.

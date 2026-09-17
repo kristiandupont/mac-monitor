@@ -10,8 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"mac-monitor/internal/alerts"
 	"mac-monitor/internal/collector"
 	"mac-monitor/internal/config"
+	"mac-monitor/internal/notify"
 	"mac-monitor/internal/server"
 	"mac-monitor/internal/storage"
 	"mac-monitor/internal/tray"
@@ -31,11 +33,11 @@ func main() {
 
 	dir := dataDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	cfg, err := config.Load(cfgPath)
+	cfgStore, err := config.Open(cfgPath)
 	if err != nil {
 		log.Printf("config: %v (using defaults)", err)
 	}
-	retention := time.Duration(cfg.Retention)
+	retention := time.Duration(cfgStore.Get().Retention)
 	log.Printf("Config: %s (retention %v)", cfgPath, retention)
 
 	db, err := storage.Open(filepath.Join(dir, "mac-monitor.db"))
@@ -47,15 +49,27 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var engine *alerts.Engine
+	notify.Init(func(process string) {
+		if err := engine.Ignore(process); err != nil {
+			log.Printf("ignore %s: %v", process, err)
+		}
+	}, cfgStore.Get().Alerts.Native)
+	engine, err = alerts.New(db, cfgStore, sendNative)
+	if err != nil {
+		log.Fatalf("alerts: %v", err)
+	}
+	go engine.Run(ctx)
+
 	hub := server.NewHub()
 	t := tray.New(cancel, addr)
 
-	go runCollector(ctx, db, hub, t)
+	go runCollector(ctx, db, hub, t, engine)
 	go runPruner(ctx, db, retention)
 
 	go func() {
 		log.Printf("Listening on http://localhost%s", addr)
-		srv := server.New(db, hub, webui.FS(), retention)
+		srv := server.New(db, hub, webui.FS(), retention, engine)
 		if err := srv.ListenAndServe(addr); err != nil {
 			log.Printf("server stopped: %v", err)
 			cancel()
@@ -86,7 +100,15 @@ func dataDir() string {
 	return dir
 }
 
-func runCollector(ctx context.Context, db *storage.DB, hub *server.Hub, t *tray.Tray) {
+func sendNative(ctx context.Context, n storage.Notification) error {
+	category := ""
+	if n.Kind == alerts.KindCPU {
+		category = "cpu" // adds the "Don't Alert for This App" action
+	}
+	return notify.Send(ctx, n.AlertKey, n.Title, n.Body, category, n.Subject)
+}
+
+func runCollector(ctx context.Context, db *storage.DB, hub *server.Hub, t *tray.Tray, engine *alerts.Engine) {
 	ticker := time.NewTicker(collectInterval)
 	defer ticker.Stop()
 	for {
@@ -102,6 +124,7 @@ func runCollector(ctx context.Context, db *storage.DB, hub *server.Hub, t *tray.
 			if err := db.Insert(snap); err != nil {
 				log.Printf("insert: %v", err)
 			}
+			engine.ObserveSnapshot(snap)
 			hub.Broadcast(snap)
 			t.SetCPU(snap.CPUPercent)
 		}
